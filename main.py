@@ -31,15 +31,25 @@ import subprocess
 # "option --dashboard not recognized". Должно быть ДО любого импорта Kivy.
 os.environ.setdefault("KIVY_NO_ARGS", "1")
 
+# [FIX-10] Принудительно переходим в директорию проекта.
+# Без этого os.getcwd() и find_dotenv(usecwd=True) могут вернуть
+# C:\Users\...\AppData\Local\Temp или любой другой CWD запустившего процесса,
+# что ломает поиск .env, data/, src/ и любых относительных путей.
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+os.chdir(_PROJECT_ROOT)
+# Добавляем корень проекта в sys.path, если его там нет
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # [FIX-9] Подавляем окно Kivy при не-mobile запуске
 if "--mobile" not in sys.argv:
     os.environ.setdefault("KIVY_NO_ENV_CONFIG", "1")
     os.environ.setdefault("KIVY_HEADLESS", "1")
 
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 
-# Надёжно подгружаем .env даже если процесс стартует не из корня проекта
-_env_path = find_dotenv(usecwd=True) or find_dotenv() or os.path.join(os.path.dirname(__file__), ".env")
+# Всегда грузим .env из папки проекта — CWD уже правильный благодаря FIX-10
+_env_path = os.path.join(_PROJECT_ROOT, ".env")
 load_dotenv(_env_path, override=True)
 
 from src.argos_logger import get_logger
@@ -80,10 +90,12 @@ def _ensure_venv_bootstrap() -> bool:
         install_arc = os.getenv("ARGOS_AUTO_ARC", "on").strip().lower() in ("1", "on", "true", "yes", "да")
         if install_arc:
             try:
-                subprocess.check_call([venv_python, "-m", "pip", "install", "arc-agi", "arcengine"], cwd=project_root)
+                # arc-agi v0.0.7 — датасет-пакет (ARC1/ARC2), arcengine требует Python>=3.12
+                # Устанавливаем только arc-agi; arcengine — для .venv_arc (ARC-AGI-3 игровой движок)
+                subprocess.check_call([venv_python, "-m", "pip", "install", "arc-agi"], cwd=project_root)
             except Exception as e:
-                # На py311 arcengine может быть недоступен, не роняем запуск Argos
-                log.warning("[VENV] Не удалось установить arc-agi/arcengine: %s", e)
+                # Не роняем запуск Argos из-за опционального пакета
+                log.warning("[VENV] Не удалось установить arc-agi: %s", e)
 
         log.info("[VENV] Перезапуск Argos из .venv...")
         os.execv(venv_python, [venv_python, __file__, *sys.argv[1:]])
@@ -95,7 +107,9 @@ def _ensure_venv_bootstrap() -> bool:
 
 
 def _mcp_http_alive(host: str, port: int, timeout: float = 1.5) -> bool:
-    url = f"http://{host}:{port}/mcp"
+    # 0.0.0.0 — это bind-адрес, не destination; для проверки используем 127.0.0.1
+    check_host = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
+    url = f"http://{check_host}:{port}/mcp"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return int(getattr(resp, "status", 0)) == 200
@@ -105,9 +119,11 @@ def _mcp_http_alive(host: str, port: int, timeout: float = 1.5) -> bool:
 
 def _start_mcp_with_guard(core, admin, host: str, port: int) -> bool:
     try:
+        # Для проверки занятости порта используем 127.0.0.1 (0.0.0.0 не connectable)
+        check_host = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
-            busy = s.connect_ex((host, port)) == 0
+            busy = s.connect_ex((check_host, port)) == 0
         if busy and _mcp_http_alive(host, port):
             return True
         if busy and not _mcp_http_alive(host, port):
@@ -262,6 +278,19 @@ class ArgosOrchestrator:
             log.error("[CORE] Критическая ошибка ядра: %s", e)
             raise
 
+        # 6.2. [FIX-P2P-1] Авто-старт P2P при загрузке.
+        # В банере было "P2P: ❌", потому что self.core.p2p оставался None,
+        # пока пользователь не введёт команду "запусти p2p". Теперь включается
+        # по умолчанию; отключить можно ARGOS_P2P_AUTOSTART=0.
+        if os.getenv("ARGOS_P2P_AUTOSTART", "1") == "1":
+            try:
+                result = self.core.start_p2p()
+                log.info("[P2P] Автозапуск: %s", str(result).splitlines()[0] if result else "ok")
+            except Exception as e:
+                log.warning("[P2P] Автозапуск не удался (банер покажет ❌): %s", e)
+        else:
+            log.info("[P2P] Автозапуск отключён (ARGOS_P2P_AUTOSTART=0)")
+
         # 6.5. [INTEGRATOR] Унифицированная интеграция подсистем
         try:
             self.integrator = ArgosIntegrator(self.core)
@@ -271,6 +300,168 @@ class ArgosOrchestrator:
             log.warning("[INTEGRATOR] Ошибка интеграции: %s", e)
             self.integrator = None
             self.registry = {}
+
+        # 6.7. [BRAIN] ARGOS AI Brain — автозапуск + клиент.
+        # При ARGOS_BRAIN_ENABLED=1 сначала пробует подключиться к уже запущенному серверу.
+        # Если /health не отвечает — запускает argos_brain_api.py в фоновом процессе,
+        # ждёт 4 секунды и повторяет попытку подключения.
+        self.brain = None
+        self._brain_proc = None
+        if os.getenv("ARGOS_BRAIN_ENABLED", "0") == "1":
+            try:
+                from argos_brain_examples import ARGOSBrainClient
+                _brain_url = os.getenv("ARGOS_BRAIN_API_URL", "http://localhost:5001")
+                _client = ARGOSBrainClient(_brain_url)
+
+                def _start_brain_server():
+                    """Запускает argos_brain_api.py как фоновый процесс."""
+                    _brain_script = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), "argos_brain_api.py"
+                    )
+                    if not os.path.exists(_brain_script):
+                        log.warning("[BRAIN] argos_brain_api.py не найден: %s", _brain_script)
+                        return None
+                    _venv_py = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), ".venv",
+                        "Scripts" if os.name == "nt" else "bin", "python"
+                    )
+                    _py = _venv_py if os.path.exists(_venv_py) else sys.executable
+                    log.info("[BRAIN] Запускаю Brain API: %s %s", _py, _brain_script)
+                    try:
+                        proc = subprocess.Popen(
+                            [_py, _brain_script],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            cwd=os.path.dirname(os.path.abspath(__file__)),
+                        )
+                        return proc
+                    except Exception as _pe:
+                        log.warning("[BRAIN] Не удалось запустить Brain: %s", _pe)
+                        return None
+
+                if _client.health_check():
+                    self.brain = _client
+                    log.info("[BRAIN] ✅ Brain API уже запущен: %s", _brain_url)
+                else:
+                    log.info("[BRAIN] Brain API не отвечает — запускаю автоматически...")
+                    self._brain_proc = _start_brain_server()
+                    if self._brain_proc:
+                        time.sleep(4)  # ждём пока Flask поднимется
+                        if _client.health_check():
+                            self.brain = _client
+                            log.info("[BRAIN] ✅ Brain API запущен (PID %d): %s",
+                                     self._brain_proc.pid, _brain_url)
+                        else:
+                            log.warning("[BRAIN] Brain API запущен но /health не отвечает — "
+                                        "проверь порт %s", _brain_url)
+            except Exception as e:
+                log.warning("[BRAIN] Не удалось инициализировать мозг: %s", e)
+        else:
+            log.info("[BRAIN] Отключён (ARGOS_BRAIN_ENABLED != 1)")
+
+        # 6b. Прогрев — GPU серверы приоритет, Ollama fallback
+        def _warmup_ollama():
+            import time, urllib.request as _ur, json as _json
+            _ai_mode = os.getenv("ARGOS_AI_MODE", "auto")
+
+            # ── Прогрев GPU серверов (local-gpu mode) ────────────────────────
+            _gpu_warmed = False
+            if _ai_mode in ("local-gpu", "gpu", "lg", "auto"):
+                for _idx in ("0", "1", "2"):
+                    _gh = os.getenv(f"GPU_SERVER_{_idx}_HOST", "localhost")
+                    _gp = os.getenv(f"GPU_SERVER_{_idx}_PORT", "")
+                    _gm = os.getenv(f"GPU_SERVER_{_idx}_MODEL", f"GPU{_idx}")
+                    _gn = os.getenv(f"GPU_SERVER_{_idx}_NAME", f"GPU{_idx}")
+                    if not _gp:
+                        continue
+                    try:
+                        # Health check
+                        _hreq = _ur.Request(f"http://{_gh}:{_gp}/health")
+                        with _ur.urlopen(_hreq, timeout=3) as _hr:
+                            if _hr.status != 200:
+                                continue
+                        # Warmup ping
+                        _payload = _json.dumps({"prompt": "ping", "n_predict": 1, "stream": False}).encode()
+                        _wreq = _ur.Request(
+                            f"http://{_gh}:{_gp}/completion", data=_payload,
+                            headers={"Content-Type": "application/json"}, method="POST",
+                        )
+                        with _ur.urlopen(_wreq, timeout=30):
+                            pass
+                        log.info("[WARMUP] ✅ GPU%s %s (%s) готов", _idx, _gn, _gm)
+                        _gpu_warmed = True
+                    except Exception as _e:
+                        log.warning("[WARMUP] GPU%s (%s:%s) не ответил: %s", _idx, _gh, _gp, _e)
+
+            # ── Ollama fallback (если не local-gpu или GPU серверы недоступны) ─
+            if not _gpu_warmed or _ai_mode not in ("local-gpu", "gpu", "lg"):
+                try:
+                    import requests as _req
+                    _host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+                    _model = os.getenv("OLLAMA_MODEL", "tinyllama:latest")
+                    log.info("[WARMUP] Прогрев Ollama модели %s...", _model)
+                    r = _req.post(
+                        _host.rstrip("/") + "/api/generate",
+                        json={"model": _model, "prompt": "ping", "stream": False,
+                              "options": {"num_ctx": 512, "num_gpu": -1}},
+                        timeout=120,
+                    )
+                    if r.ok:
+                        log.info("[WARMUP] ✅ Ollama %s готова к работе", _model)
+                    else:
+                        log.warning("[WARMUP] Ollama вернула HTTP %s", r.status_code)
+                except Exception as e:
+                    log.warning("[WARMUP] Ollama не ответила: %s", e)
+
+        threading.Thread(target=_warmup_ollama, daemon=True, name="OllamaWarmup").start()
+
+        # 6c. OpenClaw Gateway — автозапуск если OPENCLAW_ENABLED=true
+        if os.getenv("OPENCLAW_ENABLED", "false").lower() in ("1", "true", "yes"):
+            def _start_openclaw_gateway():
+                import shutil, subprocess as _sp, time as _t, requests as _req
+                gw_url = os.getenv("OPENCLAW_BASE_URL", "http://localhost:47392")
+                try:
+                    r = _req.get(gw_url + "/health", timeout=3)
+                    if r.ok:
+                        log.info("[OpenClaw] Gateway уже запущен: %s", gw_url)
+                        return
+                except Exception:
+                    pass
+                argoss_dir = os.path.dirname(os.path.abspath(__file__))
+                gw_port_str = gw_url.rsplit(":", 1)[-1].split("/")[0]
+                # Приоритет 1: локальный node_modules (стабильнее, не зависит от PATH)
+                _local_idx = os.path.join(argoss_dir, "node_modules", "openclaw", "dist", "index.js")
+                _node = shutil.which("node") or shutil.which("node.exe")
+                if os.path.exists(_local_idx) and _node:
+                    log.info("[OpenClaw] Запускаю Gateway (local): node dist/index.js gateway --port %s", gw_port_str)
+                    proc = _sp.Popen(
+                        [_node, _local_idx, "gateway", "--port", gw_port_str],
+                        cwd=argoss_dir,
+                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    )
+                else:
+                    # Приоритет 2: npx (глобальный/PATH)
+                    npx = shutil.which("npx")
+                    if not npx:
+                        log.warning("[OpenClaw] ни node+local, ни npx не найдены — Gateway не запущен. "
+                                    "Установи: npm install (в папке проекта)")
+                        return
+                    log.info("[OpenClaw] Запускаю Gateway (npx): npx openclaw gateway start --port %s", gw_port_str)
+                    proc = _sp.Popen(
+                        [npx, "openclaw", "gateway", "start", "--port", gw_port_str],
+                        cwd=argoss_dir,
+                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    )
+                _t.sleep(5)
+                try:
+                    r = _req.get(gw_url + "/health", timeout=3)
+                    if r.ok:
+                        log.info("[OpenClaw] Gateway запущен (PID %d): %s", proc.pid, gw_url)
+                    else:
+                        log.warning("[OpenClaw] Gateway запущен но /health вернул %s", r.status_code)
+                except Exception as e:
+                    log.warning("[OpenClaw] Gateway не отвечает: %s", e)
+            threading.Thread(target=_start_openclaw_gateway, daemon=True, name="OpenClawGateway").start()
 
         # 7. Telegram
         self.tg = None  # [FIX-4]
@@ -354,134 +545,91 @@ class ArgosOrchestrator:
     # --- [FIX-3] graceful shutdown через threading.Event + SIGTERM ---
     def boot_server(self):
         log.info("[SERVER] Headless режим — только Telegram + P2P")
-        if "--dashboard" in sys.argv:
-            log.info("[SERVER] Dashboard: http://localhost:8080")
+
+        # Dashboard — всегда запускается в server-режиме
+        _dash_port = int(os.getenv("ARGOS_DASHBOARD_PORT", "8080") or "8080")
+        try:
+            from src.interface.web_engine import run_web_sync
+            _dash_thread = threading.Thread(
+                target=run_web_sync,
+                kwargs={"core": self.core, "host": "0.0.0.0", "port": _dash_port},
+                daemon=True,
+                name="argos-dashboard",
+            )
+            _dash_thread.start()
+            log.info("[SERVER] Dashboard: http://localhost:%d", _dash_port)
+        except Exception as _e:
+            log.warning("[SERVER] Dashboard не запущен: %s", _e)
+
+        # Master Dashboard (web_server.py) — единая точка входа на порту 18789
+        _master_port = int(os.getenv("ARGOS_WEB_PORT", "18789") or "18789")
+        _master_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web_server.py")
+        if os.path.exists(_master_script):
+            try:
+                _venv_py = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    ".venv", "Scripts" if os.name == "nt" else "bin", "python",
+                )
+                _py = _venv_py if os.path.exists(_venv_py) else sys.executable
+                _master_proc = subprocess.Popen(
+                    [_py, _master_script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+                log.info("[WEB] Master Dashboard запущен (PID %d): http://localhost:%d/",
+                         _master_proc.pid, _master_port)
+            except Exception as _we:
+                log.warning("[WEB] Не удалось запустить web_server.py: %s", _we)
+        else:
+            log.warning("[WEB] web_server.py не найден, пропускаю")
+
+        # MCP API + watchdog
+        _mcp_host = os.getenv("ARGOS_MCP_HOST", "0.0.0.0")
+        _mcp_port = int(os.getenv("ARGOS_MCP_PORT", "8000") or "8000")
+        _start_mcp_with_guard(self.core, self.admin, _mcp_host, _mcp_port)
+        log.info("[MCP] Endpoint доступен: http://%s:%d/mcp", _mcp_host, _mcp_port)
+        _start_mcp_watchdog(self.core, self.admin, _mcp_host, _mcp_port)
 
         self._start_telegram()
 
+        stop_event = threading.Event()
+
         def _handle_signal(signum, frame):
-            log.info("Получен сигнал %s — завершаю работу...", signum)
-            self._stop_event.set()
+            log.info("Получен сигнал %s — завершаю...", signum)
+            stop_event.set()
 
         signal.signal(signal.SIGTERM, _handle_signal)
-        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGINT,  _handle_signal)
 
-        log.info("[SERVER] Жду директив. Для остановки: CTRL+C или SIGTERM.")
-
-        try:
-            while not self._stop_event.is_set():
-                self._stop_event.wait(timeout=1.0)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            self.shutdown()
+        log.info("[SERVER] Argos running. Press Ctrl+C to stop.")
+        stop_event.wait()
+        orchestrator.shutdown()
 
 
-# ══════════════════════════════════════════════════════════════
-# ТОЧКА ВХОДА
-# ══════════════════════════════════════════════════════════════
 def main():
-    sys.argv = normalize_launch_args(sys.argv)
-    _ensure_venv_bootstrap()
+    argv = normalize_launch_args(sys.argv[1:])
+    # argv — это list[str], не dict
+    if "--mobile" in argv:
+        mode = "mobile"
+    elif "--desktop" in argv:
+        mode = "desktop"
+    else:
+        mode = "server"
+    orchestrator = ArgosOrchestrator()
 
-    # Content API toggle (safe/free) для dashboard
     try:
-        from src.content_api import start_content_api
-        api_port = int(os.getenv("CONTENT_API_PORT", "5050"))
-        start_content_api(port=api_port)
-        log.info(f"[API] Content API запущен: http://127.0.0.1:{api_port}")
-    except Exception as e:
-        log.warning("[API] Content API не запущен: %s", e)
-
-    # Стартуем win_bridge_host автоматически на Windows, если порт 5000 свободен
-    if os.name == "nt":
-        bridge_enabled = os.getenv("ARGOS_WIN_BRIDGE", "on").strip().lower() in ("1", "on", "true", "yes", "да")
-
-        if not bridge_enabled:
-            log.info("[BRIDGE] ARGOS_WIN_BRIDGE=off, пропуск win_bridge_host")
+        if mode == "desktop":
+            orchestrator.boot_desktop()
+        elif mode == "mobile":
+            orchestrator.boot_mobile()
         else:
-            def _port_free(port: int) -> bool:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(0.5)
-                    return s.connect_ex(("127.0.0.1", port)) != 0
-            if _port_free(5000):
-                try:
-                    subprocess.Popen(
-                        ["python", "win_bridge_host.py"],
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                    log.info("[BRIDGE] win_bridge_host стартован на 5000")
-                except Exception as e:
-                    log.warning("[BRIDGE] Не удалось запустить win_bridge_host: %s", e)
-            else:
-                log.info("[BRIDGE] Порт 5000 занят, win_bridge_host не стартуем")
-
-    if "--openai-tools-demo" in sys.argv:
-        from src.openai_responses_tools import main as openai_tools_main
-
-        demo_args = [arg for arg in sys.argv[1:] if arg != "--openai-tools-demo"]
-        sys.exit(openai_tools_main(demo_args))
-
-    # --- [FIX-6] оборачиваем создание оркестратора ---
-    try:
-        orch = ArgosOrchestrator()
+            orchestrator.boot_server()
     except Exception as e:
-        print(f"[FATAL] Не удалось запустить ARGOS: {e}")
-        sys.exit(1)
-
-    # Автостарт MCP endpoint (http://127.0.0.1:8000/mcp)
-    mcp_enabled = os.getenv("ARGOS_MCP_ENABLE", "on").strip().lower() in ("1", "on", "true", "yes", "да")
-    if mcp_enabled:
-        mcp_host = os.getenv("ARGOS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        try:
-            mcp_port = int(os.getenv("ARGOS_MCP_PORT", "8000"))
-        except ValueError:
-            mcp_port = 8000
-        try:
-            if _start_mcp_with_guard(orch.core, orch.admin, mcp_host, mcp_port):
-                log.info("[MCP] Endpoint доступен: http://%s:%d/mcp", mcp_host, mcp_port)
-            else:
-                log.warning("[MCP] Не удалось запустить MCP endpoint на %s:%d", mcp_host, mcp_port)
-            _start_mcp_watchdog(orch.core, orch.admin, mcp_host, mcp_port)
-        except Exception as e:
-            log.warning("[MCP] Ошибка MCP bootstrap: %s", e)
-
-    # Dashboard (фоновый поток)
-    if "--dashboard" in sys.argv:
-        try:
-            from src.interface.web_engine import ArgosWebEngine
-
-            dash = ArgosWebEngine(orch.core)
-            threading.Thread(target=dash.run, daemon=True, name="ArgosDashboard").start()
-            log.info("[DASH] Веб-панель запущена: http://localhost:8080")
-        except Exception as e:
-            log.warning("[DASH] Dashboard недоступен: %s", e)
-
-    # --- [FIX-5] режимы через if/elif ---
-    try:
-        if "--root" in sys.argv:
-            if orch.root:
-                print(orch.root.request_root())
-            else:
-                print("RootManager недоступен.")
-
-        elif "--shell" in sys.argv:
-            orch.boot_shell()
-
-        elif "--mobile" in sys.argv:
-            orch.boot_mobile()
-
-        elif "--no-gui" in sys.argv:
-            orch.boot_server()
-
-        else:
-            orch.boot_desktop()
-
-    except Exception as e:
-        log.error("[BOOT] Ошибка запуска: %s", e)
-        orch.shutdown()
-        sys.exit(1)
+        log.error('Fatal startup error: %s', e)
+        raise
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
