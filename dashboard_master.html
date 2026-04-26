@@ -3,865 +3,1903 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>ARGOS · Content Fetcher</title>
+<title>ARGOS · Master Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
-
-/* ═══════════ BASE ═══════════ */
+/* ═══════════════ BASE ═══════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#060a14;--bg2:#0b1120;--bg3:#101825;
-  --card:#111827;--card2:#14202f;--card3:#1a2840;
-  --border:rgba(0,255,136,.1);--border2:rgba(59,130,246,.15);
-  --green:#00ff88;--green2:#00cc6a;
-  --blue:#3b82f6;--blue2:#60a5fa;
-  --red:#ef4444;--red2:#f87171;
-  --orange:#f59e0b;--orange2:#fbbf24;
-  --purple:#a855f7;--purple2:#c084fc;
-  --cyan:#06b6d4;--cyan2:#22d3ee;
-  --text:#c8d8f0;--text2:#8ba4c0;--muted:#4b6080;--dim:#2a3f58;
+  --bg:#060a14; --bg2:#0b1120; --bg3:#101825;
+  --card:#111827; --card2:#14202f; --card3:#1a2840;
+  --border:rgba(0,255,136,.1); --border2:rgba(59,130,246,.15);
+  --green:#00ff88; --green2:#00cc6a; --green3:rgba(0,255,136,.08);
+  --blue:#3b82f6; --blue2:#60a5fa; --blue3:rgba(59,130,246,.08);
+  --red:#ef4444; --red2:#f87171;
+  --orange:#f59e0b; --orange2:#fbbf24;
+  --purple:#a855f7; --purple2:#c084fc;
+  --cyan:#06b6d4; --cyan2:#22d3ee;
+  --text:#c8d8f0; --text2:#8ba4c0; --muted:#4b6080; --dim:#2a3f58;
   --mono:'JetBrains Mono',monospace;
   --sans:'Inter',system-ui,sans-serif;
-  --r:8px;--r2:12px;
+  --glow-g:0 0 20px rgba(0,255,136,.2);
+  --glow-b:0 0 20px rgba(59,130,246,.2);
+  --r:8px; --r2:12px;
+  --sb:220px;
 }
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
-body{display:flex;flex-direction:column}
-body::before{
-  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
-  background:
-    radial-gradient(ellipse 70% 60% at 10% -20%,rgba(0,255,136,.05) 0%,transparent 60%),
-    radial-gradient(ellipse 50% 50% at 90% 110%,rgba(59,130,246,.05) 0%,transparent 60%);
-}
-body>*{position:relative;z-index:1}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(0,255,136,.2);border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:rgba(0,255,136,.35)}
 
-/* ═══════════ HEADER ═══════════ */
-.hdr{
-  display:flex;align-items:center;gap:16px;
-  padding:12px 24px;flex-shrink:0;
-  background:rgba(11,17,32,.97);
-  border-bottom:1px solid var(--border);
+/* ═══════════════ GRID ═══════════════ */
+.layout{display:flex;height:100%;position:relative}
+.layout::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 60% 50% at 20% -10%,rgba(0,255,136,.04) 0%,transparent 60%),
+    radial-gradient(ellipse 40% 40% at 80% 110%,rgba(59,130,246,.04) 0%,transparent 60%);
 }
-.hdr-logo{display:flex;align-items:center;gap:11px}
-.hdr-logo svg{filter:drop-shadow(0 0 10px rgba(0,255,136,.4))}
-.hdr-title{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.12em;color:var(--green);text-shadow:0 0 20px rgba(0,255,136,.3)}
-.hdr-ver{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.18em;margin-top:1px}
-.hdr-sep{color:var(--dim);margin:0 4px}
-.hdr-feature{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--cyan2);letter-spacing:.06em}
-.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-.hdr-clock{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--cyan2)}
-.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;
+.layout>*{position:relative;z-index:1}
+
+/* ═══════════════ SIDEBAR ═══════════════ */
+.sb{
+  width:var(--sb);flex-shrink:0;
+  background:linear-gradient(180deg,rgba(11,17,32,.98) 0%,rgba(8,13,24,.98) 100%);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  padding:0;overflow:hidden;
+}
+.sb-brand{
+  padding:20px 18px 16px;
+  border-bottom:1px solid rgba(0,255,136,.06);
+}
+.sb-logo{display:flex;align-items:center;gap:11px;margin-bottom:3px}
+.sb-logo svg{filter:drop-shadow(0 0 10px rgba(0,255,136,.4))}
+.sb-title{font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.12em;color:var(--green);text-shadow:0 0 20px rgba(0,255,136,.4)}
+.sb-ver{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.18em;margin-top:1px}
+
+.sb-status{
+  padding:10px 18px;
+  border-bottom:1px solid rgba(0,255,136,.06);
+  display:flex;flex-direction:column;gap:6px;
+}
+.ss-row{display:flex;align-items:center;justify-content:space-between}
+.ss-label{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.ss-val{font-family:var(--mono);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:5px}
+
+.sb-nav{flex:1;overflow-y:auto;padding:10px 10px;display:flex;flex-direction:column;gap:2px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 12px;border-radius:7px;
+  background:transparent;border:none;color:var(--muted);
+  font-family:var(--mono);font-size:11px;font-weight:500;
+  letter-spacing:.06em;cursor:pointer;transition:all .18s;
+  width:100%;text-align:left;white-space:nowrap;
+}
+.nav-item:hover{background:rgba(0,255,136,.05);color:var(--text2)}
+.nav-item.active{
+  background:linear-gradient(90deg,rgba(0,255,136,.1),rgba(0,255,136,.04));
+  color:var(--green);border:1px solid rgba(0,255,136,.15);
+  text-shadow:0 0 10px rgba(0,255,136,.3);
+}
+.nav-icon{font-size:14px;flex-shrink:0;width:18px;text-align:center}
+.nav-badge{margin-left:auto;background:rgba(0,255,136,.15);color:var(--green);
+  font-size:9px;padding:1px 6px;border-radius:10px;border:1px solid rgba(0,255,136,.2)}
+
+.sb-foot{
+  padding:12px 18px;border-top:1px solid rgba(0,255,136,.06);
+  display:flex;flex-direction:column;gap:8px;
+}
+.sf-clock{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--cyan);text-align:center;letter-spacing:.05em}
+.sf-cd{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center}
+
+/* ═══════════════ MAIN ═══════════════ */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+
+.topbar{
+  height:44px;flex-shrink:0;
+  background:rgba(11,17,32,.95);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:16px;
+}
+.tb-title{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text);letter-spacing:.08em}
+.tb-sep{color:var(--dim);font-size:16px}
+.tb-sub{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.pill{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;
   background:rgba(0,0,0,.3);border:1px solid var(--border);
   font-family:var(--mono);font-size:10px;color:var(--muted)}
-.pill.g{border-color:rgba(0,255,136,.25);color:var(--green)}
-.pill.r{border-color:rgba(239,68,68,.25);color:var(--red2)}
-.pdot{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pp 2s infinite}
-@keyframes pp{0%,100%{opacity:1}50%{opacity:.35}}
+.pill.g{border-color:rgba(0,255,136,.2);color:var(--green)}
+.pill.r{border-color:rgba(239,68,68,.2);color:var(--red)}
+.pill-dot{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
 
-/* ═══════════ LAYOUT ═══════════ */
-.body{flex:1;overflow:hidden;display:flex;flex-direction:column}
-.scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px}
+.content{flex:1;overflow:hidden;position:relative}
+.panel{display:none;position:absolute;inset:0;flex-direction:column;overflow:hidden}
+.panel.active{display:flex}
+.pscroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px}
 
-/* ═══════════ TOP ROW (mode + licence + stats) ═══════════ */
-.top-row{display:grid;grid-template-columns:auto auto 1fr;gap:14px;align-items:start;margin-bottom:20px}
-@media(max-width:800px){.top-row{grid-template-columns:1fr}}
+/* ═══════════════ CARDS ═══════════════ */
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.gauto{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.gauto2{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.gauto3{grid-template-columns:repeat(auto-fill,minmax(310px,1fr))}
 
-/* ═══════════ MODE CARDS ═══════════ */
-.mode-group{display:flex;gap:8px}
-.mode-card{
-  display:flex;flex-direction:column;align-items:center;gap:5px;
-  padding:12px 18px;border-radius:var(--r2);cursor:pointer;
-  background:var(--card);border:1px solid var(--border);
-  transition:all .18s;min-width:80px;
+.card{
+  background:linear-gradient(135deg,var(--card) 0%,var(--card2) 100%);
+  border:1px solid var(--border);border-radius:var(--r2);
+  padding:18px 20px;position:relative;overflow:hidden;
+  transition:border-color .2s,transform .15s,box-shadow .2s;
 }
-.mode-card:hover{transform:translateY(-1px)}
-.mode-card.active{border-color:rgba(0,255,136,.4);background:rgba(0,255,136,.07);box-shadow:0 0 16px rgba(0,255,136,.1)}
-.mode-icon{font-size:20px}
-.mode-name{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--muted)}
-.mode-card.active .mode-name{color:var(--green)}
-
-/* ═══════════ LICENCE FILTERS ═══════════ */
-.lic-group{display:flex;flex-direction:column;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:12px 14px}
-.lic-label{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:2px}
-.lic-row{display:flex;gap:5px;flex-wrap:wrap}
-.fb{padding:4px 10px;border-radius:4px;font-family:var(--mono);font-size:9px;letter-spacing:.07em;
-  border:1px solid rgba(75,96,128,.22);background:transparent;color:var(--muted);
-  cursor:pointer;transition:all .15s;white-space:nowrap}
-.fb:hover{border-color:rgba(0,255,136,.28);color:var(--text2)}
-.fb.act{border-color:var(--green);color:var(--green);background:rgba(0,255,136,.07)}
-
-/* ═══════════ STATS BAR ═══════════ */
-.stats-bar{display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
-.stat{display:flex;flex-direction:column;align-items:center;gap:2px;
-  padding:8px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);min-width:72px}
-.stat-val{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--green);line-height:1}
-.stat-val.blue{color:var(--blue2)}
-.stat-val.orange{color:var(--orange2)}
-.stat-val.red{color:var(--red2)}
-.stat-lbl{font-family:var(--mono);font-size:8px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
-
-/* ═══════════ URL INPUT ROW ═══════════ */
-.input-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-.inp{background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:6px;
-  color:var(--text);font-family:var(--mono);font-size:12px;padding:9px 13px;outline:none;transition:border-color .2s}
-.inp:focus{border-color:rgba(0,255,136,.35)}
-.inp::placeholder{color:var(--muted)}
-.url-inp{flex:1;min-width:280px}
-
-/* ═══════════ BUTTONS ═══════════ */
-.btn{display:inline-flex;align-items:center;gap:6px;
-  padding:8px 16px;border-radius:6px;border:1px solid;
-  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;
-  cursor:pointer;transition:all .16s;white-space:nowrap}
-.btn:active{transform:scale(.97)}
-.btn:disabled{opacity:.3;cursor:not-allowed}
-.btn-g{background:rgba(0,255,136,.1);color:var(--green);border-color:rgba(0,255,136,.3)}
-.btn-g:hover{background:rgba(0,255,136,.18);box-shadow:0 0 14px rgba(0,255,136,.12)}
-.btn-b{background:rgba(59,130,246,.1);color:var(--blue2);border-color:rgba(59,130,246,.3)}
-.btn-b:hover{background:rgba(59,130,246,.18)}
-.btn-r{background:rgba(239,68,68,.1);color:var(--red2);border-color:rgba(239,68,68,.3)}
-.btn-r:hover{background:rgba(239,68,68,.18)}
-.btn-x{background:transparent;color:var(--muted);border-color:rgba(75,96,128,.25)}
-.btn-x:hover{color:var(--text2);border-color:rgba(75,96,128,.45)}
-.btn-o{background:rgba(245,158,11,.1);color:var(--orange2);border-color:rgba(245,158,11,.3)}
-.btn-sm{padding:5px 11px;font-size:10px}
-
-/* ═══════════ MAIN GRID ═══════════ */
-.main-grid{display:grid;grid-template-columns:1fr 340px;gap:16px;height:calc(100% - 180px)}
-@media(max-width:900px){.main-grid{grid-template-columns:1fr}}
-
-/* ═══════════ QUEUE ═══════════ */
-.queue-wrap{display:flex;flex-direction:column;gap:0;overflow:hidden;
-  background:var(--card);border:1px solid var(--border);border-radius:var(--r2)}
-.queue-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
-  border-bottom:1px solid rgba(0,255,136,.07);flex-shrink:0;
-  background:linear-gradient(90deg,rgba(0,255,136,.04),transparent)}
-.queue-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--green)}
-.queue-list{flex:1;overflow-y:auto;padding:8px}
-.qi{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;
-  background:rgba(0,0,0,.25);border:1px solid rgba(75,96,128,.12);margin-bottom:5px;
-  transition:all .15s;cursor:default}
-.qi:hover{border-color:rgba(0,255,136,.15);background:rgba(0,0,0,.4)}
-.qi:last-child{margin-bottom:0}
-.qi-num{font-family:var(--mono);font-size:9px;color:var(--muted);min-width:20px;text-align:right;flex-shrink:0}
-.qi-url{font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.qi-type{font-family:var(--mono);font-size:9px;padding:1px 7px;border-radius:3px;flex-shrink:0}
-.qi-type.IMG{background:rgba(168,85,247,.1);color:var(--purple2);border:1px solid rgba(168,85,247,.2)}
-.qi-type.AUDIO{background:rgba(245,158,11,.08);color:var(--orange2);border:1px solid rgba(245,158,11,.2)}
-.qi-type.PDF{background:rgba(239,68,68,.08);color:var(--red2);border:1px solid rgba(239,68,68,.2)}
-.qi-type.CODE{background:rgba(6,182,212,.08);color:var(--cyan2);border:1px solid rgba(6,182,212,.2)}
-.qi-type.JSON{background:rgba(59,130,246,.08);color:var(--blue2);border:1px solid rgba(59,130,246,.2)}
-.qi-type.FILE{background:rgba(75,96,128,.08);color:var(--muted);border:1px solid rgba(75,96,128,.2)}
-.qi-status{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--dim)}
-.qi-status.ok{background:var(--green);box-shadow:0 0 5px rgba(0,255,136,.4)}
-.qi-status.err{background:var(--red)}
-.qi-status.loading{background:var(--orange);animation:pp 1s infinite}
-.qi-del{color:var(--dim);font-size:14px;cursor:pointer;padding:0 3px;flex-shrink:0;line-height:1}
-.qi-del:hover{color:var(--red2)}
-.queue-empty{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:center;padding:30px 16px}
-.queue-actions{display:flex;gap:6px;padding:10px 10px;border-top:1px solid rgba(0,255,136,.07);flex-shrink:0}
-
-/* ═══════════ RIGHT PANEL ═══════════ */
-.right-panel{display:flex;flex-direction:column;gap:12px;overflow:hidden}
-
-/* SOURCE LIBRARY */
-.src-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;flex-shrink:0}
-.src-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
-  border-bottom:1px solid rgba(0,255,136,.07);
-  background:linear-gradient(90deg,rgba(0,255,136,.04),transparent)}
-.src-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--green)}
-.src-list{display:flex;flex-direction:column;gap:1px}
-.src-item{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;transition:all .15s;border-bottom:1px solid rgba(255,255,255,.02)}
-.src-item:last-child{border-bottom:none}
-.src-item:hover{background:rgba(0,255,136,.04)}
-.src-icon{font-size:16px;flex-shrink:0;width:22px;text-align:center}
-.src-info{flex:1;min-width:0}
-.src-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text)}
-.src-desc{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.src-badge{font-family:var(--mono);font-size:9px;padding:1px 7px;border-radius:3px;border:1px solid;flex-shrink:0;white-space:nowrap}
-.src-badge.cc0{background:rgba(0,255,136,.08);color:var(--green);border-color:rgba(0,255,136,.2)}
-.src-badge.free{background:rgba(59,130,246,.08);color:var(--blue2);border-color:rgba(59,130,246,.2)}
-.src-badge.mit{background:rgba(6,182,212,.08);color:var(--cyan2);border-color:rgba(6,182,212,.2)}
-.src-badge.key{background:rgba(245,158,11,.08);color:var(--orange2);border-color:rgba(245,158,11,.2)}
-
-/* LOG */
-.log-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
-  display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0}
-.log-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
-  border-bottom:1px solid rgba(0,255,136,.07);flex-shrink:0;
-  background:linear-gradient(90deg,rgba(0,255,136,.04),transparent)}
-.log-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--green)}
-.logbox{flex:1;overflow-y:auto;padding:10px 12px;
-  font-family:var(--mono);font-size:10px;line-height:1.8;color:var(--muted);
-  white-space:pre-wrap;word-break:break-all;min-height:80px}
-.logbox .le{color:#ff5c5c}.logbox .lw{color:var(--orange2)}
-.logbox .ls{color:var(--green)}.logbox .li{color:var(--cyan2)}
-.logbox .lt{color:var(--dim)}
-
-/* SAVED FILES */
-.files-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
-  display:flex;flex-direction:column;overflow:hidden;margin-top:10px;flex-shrink:0}
-.files-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
-  border-bottom:1px solid rgba(0,255,136,.07);flex-shrink:0;
-  background:linear-gradient(90deg,rgba(59,130,246,.04),transparent)}
-.files-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--blue2)}
-.files-list{max-height:200px;overflow-y:auto;padding:6px}
-.fi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;
-  border:1px solid rgba(75,96,128,.12);margin-bottom:4px;background:rgba(0,0,0,.25);
-  transition:all .15s}
-.fi:last-child{margin-bottom:0}
-.fi:hover{border-color:rgba(59,130,246,.2);background:rgba(59,130,246,.04)}
-.fi-name{font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fi-size{font-family:var(--mono);font-size:9px;color:var(--muted);flex-shrink:0}
-.fi-open{font-size:12px;cursor:pointer;color:var(--muted);flex-shrink:0;text-decoration:none}
-.fi-open:hover{color:var(--cyan2)}
-.fi-del{font-size:13px;cursor:pointer;color:var(--dim);flex-shrink:0}
-.fi-del:hover{color:var(--red2)}
-.files-empty{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:16px}
-
-/* ═══════════ PROGRESS BAR (fetch running) ═══════════ */
-.progress-bar{
-  height:2px;background:rgba(0,255,136,.08);flex-shrink:0;
-  position:relative;overflow:hidden;
+.card:hover{border-color:rgba(0,255,136,.22);transform:translateY(-1px);box-shadow:var(--glow-g)}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(0,255,136,.15),transparent);
 }
-.progress-fill{
-  position:absolute;top:0;left:0;height:100%;width:0%;
-  background:linear-gradient(90deg,var(--green2),var(--green));
-  transition:width .4s ease;
+.card::after{
+  content:'';position:absolute;top:-1px;left:-1px;width:12px;height:12px;
+  border-top:1.5px solid var(--green);border-left:1.5px solid var(--green);
+  border-radius:var(--r2) 0 0 0;opacity:.4;
 }
-.progress-bar.running .progress-fill{
-  animation:sweep 1.2s linear infinite;
-  width:60%;
-}
-@keyframes sweep{
-  0%{left:-60%;width:60%}
-  100%{left:100%;width:60%}
-}
+.card-blue::after{border-color:var(--blue)}
+.card-blue{border-color:var(--border2)}
+.card-blue:hover{border-color:rgba(59,130,246,.3);box-shadow:var(--glow-b)}
+.card-blue::before{background:linear-gradient(90deg,transparent,rgba(59,130,246,.12),transparent)}
 
-/* ═══════════ BADGE ═══════════ */
-.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;
-  font-family:var(--mono);font-size:9px;font-weight:600;border:1px solid}
+.kpi{display:flex;flex-direction:column;gap:4px}
+.kpi-val{font-family:var(--mono);font-size:32px;font-weight:700;line-height:1;color:var(--green)}
+.kpi-val.blue{color:var(--blue2)}
+.kpi-val.red{color:var(--red2)}
+.kpi-val.orange{color:var(--orange2)}
+.kpi-val.purple{color:var(--purple2)}
+.kpi-lbl{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-top:2px}
+.kpi-sub{font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px}
+
+/* ═══════════════ SECTION HEADER ═══════════════ */
+.sec{
+  display:flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:10px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.15em;color:var(--muted);
+  margin-bottom:14px;
+}
+.sec::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+.sec-icon{font-size:12px;opacity:.7}
+
+/* ═══════════════ DOT / BADGE ═══════════════ */
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot.ok{background:var(--green);box-shadow:0 0 6px rgba(0,255,136,.5)}
+.dot.warn{background:var(--orange)}
+.dot.off{background:var(--muted)}
+.dot.err{background:var(--red)}
+.sdot{width:7px;height:7px;border-radius:50%;animation:pulse 2s infinite}
+.sdot.g{background:var(--green);box-shadow:0 0 8px rgba(0,255,136,.5)}
+.sdot.r{background:var(--red);animation:none}
+.sdot.o{background:var(--orange)}
+.sdot.x{background:var(--muted);animation:none}
+
+.badge{display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:4px;
+  font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;border:1px solid}
 .bg{background:rgba(0,255,136,.09);color:var(--green);border-color:rgba(0,255,136,.2)}
 .bb{background:rgba(59,130,246,.09);color:var(--blue2);border-color:rgba(59,130,246,.2)}
 .br{background:rgba(239,68,68,.09);color:var(--red2);border-color:rgba(239,68,68,.2)}
 .bo{background:rgba(245,158,11,.09);color:var(--orange2);border-color:rgba(245,158,11,.25)}
 .bx{background:rgba(75,96,128,.08);color:var(--muted);border-color:rgba(75,96,128,.2)}
+.bp{background:rgba(168,85,247,.09);color:var(--purple2);border-color:rgba(168,85,247,.2)}
 
-/* ═══════════ TOAST ═══════════ */
+code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
+  background:rgba(6,182,212,.07);border:1px solid rgba(6,182,212,.15);
+  padding:1px 6px;border-radius:3px}
+
+/* ═══════════════ PROGRESS ═══════════════ */
+.prog{height:5px;background:rgba(255,255,255,.05);border-radius:5px;overflow:hidden;margin-top:8px}
+.prog-fill{height:100%;border-radius:5px;transition:width .8s cubic-bezier(.4,0,.2,1);min-width:2px}
+.pf-g{background:linear-gradient(90deg,var(--green2),var(--green))}
+.pf-b{background:linear-gradient(90deg,var(--blue),var(--blue2))}
+.pf-o{background:linear-gradient(90deg,var(--orange),var(--red))}
+.pf-p{background:linear-gradient(90deg,var(--purple),var(--purple2))}
+
+/* ═══════════════ TABLE ═══════════════ */
+.tbl-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:24px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;padding:10px 14px;
+  background:linear-gradient(90deg,rgba(0,255,136,.04),transparent);
+  font-family:var(--mono);font-size:9px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.12em;color:var(--green);
+  border-bottom:1px solid rgba(0,255,136,.08)}
+.tbl td{padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.03)}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover td{background:rgba(0,255,136,.02)}
+
+/* ═══════════════ BUTTONS ═══════════════ */
+.btn{display:inline-flex;align-items:center;gap:6px;
+  padding:8px 16px;border-radius:6px;border:1px solid;
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;
+  cursor:pointer;transition:all .18s;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.3;cursor:not-allowed}
+.btn-g{background:rgba(0,255,136,.1);color:var(--green);border-color:rgba(0,255,136,.3);box-shadow:0 0 12px rgba(0,255,136,.08)}
+.btn-g:hover{background:rgba(0,255,136,.18);box-shadow:var(--glow-g)}
+.btn-b{background:rgba(59,130,246,.1);color:var(--blue2);border-color:rgba(59,130,246,.3)}
+.btn-b:hover{background:rgba(59,130,246,.2)}
+.btn-r{background:rgba(239,68,68,.1);color:var(--red2);border-color:rgba(239,68,68,.3)}
+.btn-x{background:transparent;color:var(--muted);border-color:rgba(75,96,128,.25)}
+.btn-x:hover{color:var(--text2);border-color:rgba(75,96,128,.45)}
+.btn-sm{padding:5px 11px;font-size:10px}
+
+/* ═══════════════ LOG BOX ═══════════════ */
+.logbox{
+  background:rgba(0,0,0,.6);border:1px solid var(--border);
+  border-radius:var(--r);padding:14px 16px;
+  font-family:var(--mono);font-size:11px;line-height:1.8;
+  color:#6a8aaa;height:460px;overflow-y:auto;
+  white-space:pre-wrap;word-break:break-all;
+}
+.logbox .le{color:#ff5c5c} .logbox .lw{color:var(--orange)}
+.logbox .ls{color:var(--green)} .logbox .li{color:var(--cyan2)}
+.logbox .lt{color:var(--dim)}
+
+/* ═══════════════ TOAST ═══════════════ */
 .toast{
   position:fixed;bottom:20px;right:20px;
   background:var(--card2);border:1px solid var(--border);
   border-radius:var(--r);padding:10px 18px;
   font-family:var(--mono);font-size:11px;color:var(--green);
-  opacity:0;pointer-events:none;transform:translateY(8px);
-  transition:all .22s;z-index:9999;
-  box-shadow:0 8px 32px rgba(0,0,0,.5);max-width:360px;word-break:break-all;
+  opacity:0;pointer-events:none;
+  transform:translateY(8px);transition:all .22s;
+  z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  max-width:340px;word-break:break-all;
 }
 .toast.show{opacity:1;transform:translateY(0)}
+
+/* ═══════════════ SELECT / INPUT ═══════════════ */
+.sel,.inp{
+  background:rgba(0,0,0,.35);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);
+  font-family:var(--mono);font-size:11px;padding:7px 11px;outline:none;
+}
+.sel:focus,.inp:focus{border-color:rgba(0,255,136,.35)}
+.inp::placeholder{color:var(--muted)}
+
+/* ═══════════════ VM CARD ═══════════════ */
+.vmcard{
+  background:linear-gradient(135deg,var(--card),var(--card2));
+  border:1px solid var(--border);border-radius:var(--r2);
+  padding:20px;position:relative;overflow:hidden;
+  transition:all .2s;
+}
+.vmcard:hover{transform:translateY(-1px)}
+.vmcard.vm-on{border-left:3px solid var(--green);box-shadow:inset 4px 0 20px rgba(0,255,136,.04)}
+.vmcard.vm-off{border-left:3px solid rgba(239,68,68,.4)}
+.vm-name{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text)}
+.vm-ip{font-family:var(--mono);font-size:12px;color:var(--cyan2);margin-top:3px}
+.vm-region{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px}
+
+/* ═══════════════ API CARDS ═══════════════ */
+.api-card{
+  background:linear-gradient(135deg,var(--card),var(--card2));
+  border:1px solid var(--border);border-radius:var(--r2);
+  padding:16px;display:flex;flex-direction:column;gap:9px;
+  position:relative;overflow:hidden;transition:all .2s;
+}
+.api-card:hover{border-color:rgba(0,255,136,.22);transform:translateY(-1px);box-shadow:var(--glow-g)}
+.api-card.hot::before{
+  content:'';position:absolute;top:0;right:0;width:2px;height:100%;
+  background:linear-gradient(180deg,var(--green),transparent);
+}
+.api-name{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)}
+.api-desc{font-size:11px;color:var(--text2);line-height:1.55}
+.api-note{font-family:var(--mono);font-size:9px;color:var(--orange2);
+  background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);
+  border-radius:3px;padding:3px 8px;line-height:1.5}
+.api-meta{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.api-cat{font-family:var(--mono);font-size:9px;letter-spacing:.08em;
+  padding:2px 7px;border-radius:3px;border:1px solid rgba(75,96,128,.25);color:var(--muted)}
+.api-url{font-family:var(--mono);font-size:10px;color:var(--blue2);text-decoration:none}
+.api-url:hover{color:var(--cyan2);text-decoration:underline}
+.api-tags{display:flex;gap:4px;flex-wrap:wrap}
+.at{padding:2px 6px;border-radius:3px;font-family:var(--mono);font-size:9px;font-weight:600;border:1px solid}
+.at-free{background:rgba(0,255,136,.08);color:var(--green);border-color:rgba(0,255,136,.18)}
+.at-key{background:rgba(6,182,212,.07);color:var(--cyan2);border-color:rgba(6,182,212,.18)}
+.at-nokey{background:rgba(59,130,246,.07);color:var(--blue2);border-color:rgba(59,130,246,.18)}
+.at-argos{background:rgba(0,255,136,.1);color:var(--green);border-color:rgba(0,255,136,.25)}
+.at-hot{background:rgba(245,158,11,.08);color:var(--orange2);border-color:rgba(245,158,11,.18)}
+.at-paid{background:rgba(239,68,68,.08);color:var(--red2);border-color:rgba(239,68,68,.18)}
+.no-r{grid-column:1/-1;text-align:center;padding:50px;font-family:var(--mono);color:var(--muted);font-size:12px}
+
+/* ═══════════════ FILTERS ═══════════════ */
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.fb{padding:6px 12px;border-radius:5px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.07em;
+  border:1px solid rgba(75,96,128,.22);background:transparent;
+  color:var(--muted);cursor:pointer;transition:all .16s}
+.fb:hover{border-color:rgba(0,255,136,.28);color:var(--text2)}
+.fb.act{border-color:var(--green);color:var(--green);background:rgba(0,255,136,.07)}
+
+/* ═══════════════ SEARCH ═══════════════ */
+.sbox{position:relative}
+.sbox input{width:100%;background:rgba(0,0,0,.35);border:1px solid var(--border);
+  border-radius:6px;padding:8px 12px 8px 34px;color:var(--text);
+  font-family:var(--mono);font-size:12px;outline:none;transition:border-color .2s}
+.sbox input:focus{border-color:rgba(0,255,136,.3)}
+.sbox input::placeholder{color:var(--muted)}
+.sbox .si{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;font-size:13px}
+
+/* ═══════════════ ACTION RESULT ═══════════════ */
+.ar{font-family:var(--mono);font-size:10px;
+  padding:6px 10px;background:rgba(0,0,0,.35);
+  border-radius:4px;color:var(--muted);
+  flex:1;min-height:28px;word-break:break-all;
+  border:1px solid rgba(75,96,128,.12)}
+
+/* ═══════════════ OLLAMA NODES ═══════════════ */
+.olla-node{
+  background:linear-gradient(135deg,var(--card),var(--card2));
+  border:1px solid var(--border2);border-radius:var(--r2);
+  padding:18px;text-align:center;transition:all .2s;
+}
+.olla-node:hover{border-color:rgba(59,130,246,.3);box-shadow:var(--glow-b)}
+.olla-port{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--blue2)}
+
+/* ═══════════════ IFRAME ═══════════════ */
+.iframe-wrap{flex:1;display:flex;flex-direction:column}
+.iframe-wrap iframe{flex:1;border:none;width:100%;height:100%;background:#06090f}
+
+/* ═══════════════ ACT GROUPS ═══════════════ */
+.act-group{
+  background:linear-gradient(135deg,var(--card),var(--card2));
+  border:1px solid var(--border);border-radius:var(--r2);padding:20px;
+}
+.act-group-title{
+  font-family:var(--mono);font-size:10px;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin-bottom:14px;padding-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+.act-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.act-row:last-child{margin-bottom:0}
+
+/* ═══════════════ HEALTH STRIPE ═══════════════ */
+.svc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:24px}
+.svc-card{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:var(--r);padding:14px 16px;
+  display:flex;align-items:center;gap:10px;
+}
+.svc-info{min-width:0}
+.svc-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.svc-val{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ═══════════════ RESPONSIVE ═══════════════ */
+@media(max-width:900px){:root{--sb:56px}.sb-brand,.sb-status,.sb-foot,.nav-item span,.nav-badge{display:none}.nav-icon{width:100%;text-align:center}.nav-item{justify-content:center;padding:10px 0}}
+
+/* ═══════════════ FETCH TAB — Saved Files ═══════════════ */
+.fetch-main-grid{display:grid;grid-template-columns:1fr 300px;gap:16px;margin-top:16px}
+@media(max-width:900px){.fetch-main-grid{grid-template-columns:1fr}}
+.fetch-right{display:flex;flex-direction:column;gap:12px}
+.files-wrap{background:var(--card2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.files-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.files-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--blue2)}
+.files-list{max-height:220px;overflow-y:auto;padding:6px}
+.fi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;margin-bottom:3px;border:1px solid transparent;background:rgba(0,0,0,.2)}
+.fi:hover{border-color:rgba(59,130,246,.2);background:rgba(59,130,246,.04)}
+.fi-name{font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fi-size{font-family:var(--mono);font-size:9px;color:var(--muted);flex-shrink:0}
+.fi-open{font-size:12px;cursor:pointer;color:var(--muted);flex-shrink:0;text-decoration:none;padding:0 4px}.fi-open:hover{color:var(--cyan2)}
+.fi-del{font-size:14px;cursor:pointer;color:var(--dim);flex-shrink:0;padding:0 4px}.fi-del:hover{color:var(--red2)}
+.files-empty{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:20px}
 </style>
 </head>
 <body>
 
-<!-- ════════════════════════════════ HEADER ════════════════════════════════ -->
-<div class="hdr">
-  <div class="hdr-logo">
-    <svg width="26" height="26" viewBox="0 0 32 32">
-      <polygon points="16,2 28,9.5 28,22.5 16,30 4,22.5 4,9.5" fill="none" stroke="#00ff88" stroke-width="1.5" opacity=".9"/>
-      <polygon points="16,7 24,11.5 24,20.5 16,25 8,20.5 8,11.5" fill="rgba(0,255,136,.06)" stroke="rgba(0,255,136,.4)" stroke-width=".8"/>
-      <circle cx="16" cy="16" r="3" fill="#00ff88" opacity=".7"/>
-    </svg>
-    <div>
-      <div class="hdr-title">ARGOS OS</div>
-      <div class="hdr-ver">v2.1.3 · FETCH ENGINE</div>
-    </div>
-  </div>
-  <span class="hdr-sep">·</span>
-  <span class="hdr-feature">📥 CONTENT FETCHER</span>
-  <span class="hdr-sep" style="font-family:var(--mono);font-size:10px;color:var(--muted)">CC0 / CC / MIT / Apache</span>
+<div class="layout">
 
-  <div class="hdr-right">
-    <div class="pill g" id="srvPill"><div class="pdot"></div><span id="srvTxt">:18789</span></div>
-    <div class="pill" id="brainPill"><div class="pdot"></div><span id="brainTxt">Brain</span></div>
-    <div class="hdr-clock" id="hClock">00:00:00</div>
-  </div>
-</div>
-
-<!-- PROGRESS BAR -->
-<div class="progress-bar" id="progBar"><div class="progress-fill" id="progFill"></div></div>
-
-<!-- ════════════════════════════════ BODY ════════════════════════════════ -->
-<div class="body">
-<div class="scroll">
-
-  <!-- TOP ROW: Mode | Licence | Stats -->
-  <div class="top-row">
-
-    <!-- Mode -->
-    <div class="mode-group">
-      <div class="mode-card active" id="mc-offline" onclick="setMode('offline')">
-        <div class="mode-icon">📴</div>
-        <div class="mode-name">OFFLINE</div>
+<!-- ══════════════════════════════ SIDEBAR ══════════════════════════════ -->
+<aside class="sb">
+  <div class="sb-brand">
+    <div class="sb-logo">
+      <svg width="28" height="28" viewBox="0 0 32 32">
+        <polygon points="16,2 28,9.5 28,22.5 16,30 4,22.5 4,9.5" fill="none" stroke="#00ff88" stroke-width="1.5" opacity=".9"/>
+        <polygon points="16,7 24,11.5 24,20.5 16,25 8,20.5 8,11.5" fill="rgba(0,255,136,.06)" stroke="rgba(0,255,136,.4)" stroke-width=".8"/>
+        <circle cx="16" cy="16" r="3" fill="#00ff88" opacity=".7"/>
+        <line x1="16" y1="7" x2="16" y2="13" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+        <line x1="16" y1="19" x2="16" y2="25" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+        <line x1="8" y1="11.5" x2="13" y2="14.5" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+        <line x1="19" y1="17.5" x2="24" y2="20.5" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+        <line x1="24" y1="11.5" x2="19" y2="14.5" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+        <line x1="13" y1="17.5" x2="8" y2="20.5" stroke="#00ff88" stroke-width=".8" opacity=".4"/>
+      </svg>
+      <div>
+        <div class="sb-title">ARGOS OS</div>
+        <div class="sb-ver">v2.1.3 · MASTER</div>
       </div>
-      <div class="mode-card" id="mc-free" onclick="setMode('free')">
-        <div class="mode-icon">🆓</div>
-        <div class="mode-name">FREE</div>
-      </div>
-      <div class="mode-card" id="mc-safe" onclick="setMode('safe')">
-        <div class="mode-icon">🛡</div>
-        <div class="mode-name">SAFE</div>
-      </div>
-    </div>
-
-    <!-- Licence -->
-    <div class="lic-group">
-      <div class="lic-label">Фильтр лицензий</div>
-      <div class="lic-row" id="licFilters">
-        <button class="fb act" data-lic="all">ALL</button>
-        <button class="fb" data-lic="cc0">CC0</button>
-        <button class="fb" data-lic="cc">CC BY</button>
-        <button class="fb" data-lic="mit">MIT</button>
-        <button class="fb" data-lic="apache">Apache</button>
-        <button class="fb" data-lic="public">Public Domain</button>
-      </div>
-    </div>
-
-    <!-- Stats -->
-    <div class="stats-bar">
-      <div class="stat"><div class="stat-val" id="stTotal">0</div><div class="stat-lbl">Queue</div></div>
-      <div class="stat"><div class="stat-val blue" id="stDone">0</div><div class="stat-lbl">Done</div></div>
-      <div class="stat"><div class="stat-val" style="color:var(--green)" id="stOk">0</div><div class="stat-lbl">OK</div></div>
-      <div class="stat"><div class="stat-val red" id="stErr">0</div><div class="stat-lbl">Errors</div></div>
     </div>
   </div>
 
-  <!-- URL INPUT ROW -->
-  <div class="input-row">
-    <input class="inp url-inp" id="urlIn" placeholder="https://example.com/file.jpg  или  вставь несколько через Enter"
-           onkeydown="if(event.key==='Enter'){addUrl();event.preventDefault()}"/>
-    <button class="btn btn-g" onclick="addUrl()">＋ Add</button>
-    <button class="btn btn-r btn-sm" onclick="clearQueue()">⊘ Clear</button>
-    <button class="btn btn-b" id="fetchBtn" onclick="runFetch()">⟳ Fetch All</button>
-    <button class="btn btn-x btn-sm" onclick="stopFetch()">■ Stop</button>
+  <div class="sb-status">
+    <div class="ss-row">
+      <span class="ss-label">BRAIN</span>
+      <span class="ss-val"><div class="sdot x" id="sbBrainDot"></div><span id="sbBrainTxt">—</span></span>
+    </div>
+    <div class="ss-row">
+      <span class="ss-label">OLLAMA</span>
+      <span class="ss-val"><div class="sdot x" id="sbOllDot"></div><span id="sbOllTxt">—</span></span>
+    </div>
+    <div class="ss-row">
+      <span class="ss-label">WEB</span>
+      <span class="ss-val"><div class="sdot g" id="sbWebDot"></div><span>:18789</span></span>
+    </div>
   </div>
 
-  <!-- MAIN GRID -->
-  <div class="main-grid">
+  <nav class="sb-nav">
+    <button class="nav-item active" data-tab="brain">
+      <span class="nav-icon">🧠</span>
+      <span>BRAIN</span>
+    </button>
+    <button class="nav-item" data-tab="system">
+      <span class="nav-icon">🌐</span>
+      <span>SYSTEM</span>
+    </button>
+    <button class="nav-item" data-tab="apis">
+      <span class="nav-icon">🆓</span>
+      <span>FREE APIs</span>
+      <span class="nav-badge" id="nbApis">43</span>
+    </button>
+    <button class="nav-item" data-tab="vms">
+      <span class="nav-icon">🖥️</span>
+      <span>VMs</span>
+      <span class="nav-badge">4</span>
+    </button>
+    <button class="nav-item" data-tab="p2p">
+      <span class="nav-icon">🔗</span>
+      <span>P2P</span>
+    </button>
+    <button class="nav-item" data-tab="metrics">
+      <span class="nav-icon">📊</span>
+      <span>METRICS</span>
+    </button>
+    <button class="nav-item" data-tab="logs">
+      <span class="nav-icon">📝</span>
+      <span>LOGS</span>
+    </button>
+    <button class="nav-item" data-tab="actions">
+      <span class="nav-icon">⚡</span>
+      <span>ACTIONS</span>
+    </button>
+    <button class="nav-item" data-tab="fetch">
+      <span class="nav-icon">📥</span>
+      <span>FETCH</span>
+    </button>
+  </nav>
 
-    <!-- LEFT: QUEUE -->
-    <div class="queue-wrap">
-      <div class="queue-hdr">
-        <span class="queue-hdr-title">📋 URL Queue</span>
-        <span class="badge bx" id="qCount">0</span>
-        <div style="margin-left:auto;display:flex;gap:6px">
-          <button class="btn btn-x btn-sm" onclick="sortQueue()">⇅ Sort</button>
-          <button class="btn btn-x btn-sm" onclick="dedupQueue()">⊞ Dedup</button>
-          <button class="btn btn-o btn-sm" onclick="exportQueue()">↓ Export</button>
+  <div class="sb-foot">
+    <div class="sf-clock" id="clock">00:00:00</div>
+    <div class="sf-cd" id="cdown">⟳ auto 10s</div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════ MAIN ══════════════════════════════ -->
+<div class="main">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <span class="tb-title" id="tbTitle">🧠 BRAIN</span>
+    <span class="tb-sep">·</span>
+    <span class="tb-sub" id="tbSub">P2P Neural Network</span>
+    <div class="tb-right">
+      <div class="pill g" id="brainPill"><div class="pill-dot"></div><span id="brainPillTxt">connecting…</span></div>
+      <div class="pill" id="ollamaPill"><div class="pill-dot"></div><span id="ollamaPillTxt">Ollama</span></div>
+    </div>
+  </div>
+
+  <!-- PANELS -->
+  <div class="content">
+
+  <!-- ══ BRAIN ══ -->
+  <div class="panel active" id="panel-brain">
+  <div class="pscroll">
+    <div class="grid gauto" style="margin-bottom:24px">
+      <div class="card">
+        <div class="kpi"><div class="kpi-val" id="bTotal">—</div><div class="kpi-lbl">Total Nodes</div><div class="kpi-sub" id="bApiDetail">—</div></div>
+      </div>
+      <div class="card">
+        <div class="kpi"><div class="kpi-val" id="bOnline">—</div><div class="kpi-lbl">Online</div></div>
+      </div>
+      <div class="card">
+        <div class="kpi"><div class="kpi-val red" id="bOffline">—</div><div class="kpi-lbl">Offline</div></div>
+      </div>
+      <div class="card card-blue">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <div class="sdot x" id="bApiDot"></div>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:600" id="bApiTxt">Brain API :5010</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted)" id="bApiStatus">connecting…</div>
+      </div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">⬡</span>SERVICE HEALTH</div>
+    <div class="svc-grid">
+      <div class="svc-card">
+        <div class="sdot x" id="shBrain"></div>
+        <div class="svc-info"><div class="svc-name">Brain API</div><div class="svc-val" id="shBrainV">:5010/health</div></div>
+      </div>
+      <div class="svc-card">
+        <div class="sdot x" id="shOllama"></div>
+        <div class="svc-info"><div class="svc-name">Ollama</div><div class="svc-val" id="shOllamaV">:11434</div></div>
+      </div>
+      <div class="svc-card">
+        <div class="sdot x" id="shCompute"></div>
+        <div class="svc-info"><div class="svc-name">Compute</div><div class="svc-val" id="shComputeV">:8002</div></div>
+      </div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">⬡</span>NODE REGISTRY</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Status</th><th>Node ID</th><th>Address</th><th>Role</th><th>Models</th><th>Heartbeat</th></tr></thead>
+        <tbody id="bRows"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Подключение к Brain API…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+  <!-- ══ SYSTEM (iframe) ══ -->
+  <div class="panel" id="panel-system">
+    <div class="iframe-wrap">
+      <iframe id="sysIframe" src="dashboard.html" title="ARGOS System Dashboard"></iframe>
+    </div>
+  </div>
+
+  <!-- ══ FREE APIs ══ -->
+  <div class="panel" id="panel-apis">
+  <div class="pscroll">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="sbox" style="flex:1;min-width:220px">
+        <span class="si">⌕</span><input id="aSearch" type="text" placeholder="поиск по имени, описанию…"/>
+      </div>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">
+        <span id="aShown" style="color:var(--green);font-weight:600">0</span> / <span id="aTotal">0</span>
+      </span>
+    </div>
+    <div class="filters" id="aFilters">
+      <button class="fb act" data-cat="all">ВСЕ</button>
+      <button class="fb" data-cat="argos" style="border-color:rgba(0,255,136,.2);color:rgba(0,255,136,.6)">⚡ ARGOS</button>
+      <button class="fb" data-cat="AI / LLM">AI/LLM</button>
+      <button class="fb" data-cat="NLP">NLP</button>
+      <button class="fb" data-cat="Speech">РЕЧЬ</button>
+      <button class="fb" data-cat="Vision">VISION</button>
+      <button class="fb" data-cat="Weather">ПОГОДА</button>
+      <button class="fb" data-cat="Finance">ФИНАНСЫ</button>
+      <button class="fb" data-cat="Maps">КАРТЫ</button>
+      <button class="fb" data-cat="Data">ДАННЫЕ</button>
+      <button class="fb" data-cat="Dev">DEV</button>
+      <button class="fb" data-cat="Media">МЕДИА</button>
+      <button class="fb" data-cat="Misc">MISC</button>
+    </div>
+    <div class="grid gauto3" id="aGrid"></div>
+  </div>
+  </div>
+
+  <!-- ══ VMs ══ -->
+  <div class="panel" id="panel-vms">
+  <div class="pscroll">
+    <div class="sec"><span class="sec-icon">☁</span>AZURE VIRTUAL MACHINES</div>
+    <div class="grid gauto2" style="margin-bottom:24px">
+
+      <div class="vmcard vm-off" id="vmcard-AU">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+          <div><div class="vm-name">AU</div><div class="vm-ip">20.53.240.36</div><div class="vm-region">Australia East</div></div>
+          <span class="badge br" id="vmb-AU">OFFLINE</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+          <div class="dot off" id="vmd-AU"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="vmp-AU">не отвечает</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-b btn-sm" onclick="pingVM('AU','20.53.240.36')">⟳ Ping</button>
+          <button class="btn btn-g btn-sm" onclick="startVM('AU')">▶ Start</button>
         </div>
       </div>
-      <div class="queue-list" id="qList">
-        <div class="queue-empty" id="qEmpty">— добавь URL или выбери источник →</div>
+
+      <div class="vmcard vm-on" id="vmcard-JP1">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+          <div><div class="vm-name">JP1</div><div class="vm-ip">172.207.209.134</div><div class="vm-region">Japan East</div></div>
+          <span class="badge bg" id="vmb-JP1">ONLINE</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+          <div class="dot ok" id="vmd-JP1"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="vmp-JP1">—</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-b btn-sm" onclick="pingVM('JP1','172.207.209.134')">⟳ Ping</button>
+          <button class="btn btn-x btn-sm" onclick="copySSH('JP1','172.207.209.134')">⌨ SSH</button>
+        </div>
       </div>
-      <div class="queue-actions">
-        <button class="btn btn-x btn-sm" onclick="removeSelected()">– Del selected</button>
-        <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto" id="qMode">MODE: OFFLINE</span>
+
+      <div class="vmcard vm-on" id="vmcard-JP2">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+          <div><div class="vm-name">JP2</div><div class="vm-ip">40.81.208.101</div><div class="vm-region">Japan West</div></div>
+          <span class="badge bg" id="vmb-JP2">ONLINE</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+          <div class="dot ok" id="vmd-JP2"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="vmp-JP2">—</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-b btn-sm" onclick="pingVM('JP2','40.81.208.101')">⟳ Ping</button>
+          <button class="btn btn-x btn-sm" onclick="copySSH('JP2','40.81.208.101')">⌨ SSH</button>
+        </div>
+      </div>
+
+      <div class="vmcard vm-on" id="vmcard-SE">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+          <div><div class="vm-name">SE</div><div class="vm-ip">20.240.192.35</div><div class="vm-region">Sweden Central</div></div>
+          <span class="badge bg" id="vmb-SE">ONLINE</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+          <div class="dot ok" id="vmd-SE"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="vmp-SE">—</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-b btn-sm" onclick="pingVM('SE','20.240.192.35')">⟳ Ping</button>
+          <button class="btn btn-x btn-sm" onclick="copySSH('SE','20.240.192.35')">⌨ SSH</button>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="sec"><span class="sec-icon">☁</span>VM STATUS TABLE</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>VM</th><th>IP</th><th>Region</th><th>Status</th><th>Ollama</th><th>Last Check</th></tr></thead>
+        <tbody id="vmTableBody">
+          <tr><td style="font-family:var(--mono);font-weight:600">AU</td><td><code>20.53.240.36</code></td><td>Australia East</td><td><span class="badge br">OFFLINE</span></td><td><span class="badge bx">N/A</span></td><td id="vmts-AU" style="font-family:var(--mono);font-size:11px;color:var(--muted)">—</td></tr>
+          <tr><td style="font-family:var(--mono);font-weight:600">JP1</td><td><code>172.207.209.134</code></td><td>Japan East</td><td><span class="badge bg">ONLINE</span></td><td><span class="badge bx" id="vmolla-JP1">—</span></td><td id="vmts-JP1" style="font-family:var(--mono);font-size:11px;color:var(--muted)">—</td></tr>
+          <tr><td style="font-family:var(--mono);font-weight:600">JP2</td><td><code>40.81.208.101</code></td><td>Japan West</td><td><span class="badge bg">ONLINE</span></td><td><span class="badge bx" id="vmolla-JP2">—</span></td><td id="vmts-JP2" style="font-family:var(--mono);font-size:11px;color:var(--muted)">—</td></tr>
+          <tr><td style="font-family:var(--mono);font-weight:600">SE</td><td><code>20.240.192.35</code></td><td>Sweden Central</td><td><span class="badge bg">ONLINE</span></td><td><span class="badge bx" id="vmolla-SE">—</span></td><td id="vmts-SE" style="font-family:var(--mono);font-size:11px;color:var(--muted)">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+  <!-- ══ P2P ══ -->
+  <div class="panel" id="panel-p2p">
+  <div class="pscroll">
+    <div class="sec"><span class="sec-icon">🦙</span>OLLAMA CLUSTER</div>
+    <div class="grid g3" style="margin-bottom:24px">
+      <div class="olla-node">
+        <div class="olla-port">:11434</div>
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);margin:5px 0">LOCAL</div>
+        <div class="sdot x" id="os-11434" style="margin:6px auto"></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px" id="om-11434">—</div>
+      </div>
+      <div class="olla-node">
+        <div class="olla-port">:11435</div>
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);margin:5px 0">CLUSTER 1</div>
+        <div class="sdot x" id="os-11435" style="margin:6px auto"></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px" id="om-11435">—</div>
+      </div>
+      <div class="olla-node">
+        <div class="olla-port">:11436</div>
+        <div style="font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--muted);margin:5px 0">CLUSTER 2</div>
+        <div class="sdot x" id="os-11436" style="margin:6px auto"></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px" id="om-11436">—</div>
       </div>
     </div>
 
-    <!-- RIGHT PANEL -->
-    <div class="right-panel">
+    <div class="sec"><span class="sec-icon">⬡</span>WIREGUARD PEERS</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Peer</th><th>Endpoint</th><th>Allowed IPs</th><th>Status</th><th>Last Handshake</th></tr></thead>
+        <tbody id="wgRows"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Загрузка WG peers…</td></tr></tbody>
+      </table>
+    </div>
 
-      <!-- Source Library -->
-      <div class="src-wrap">
-        <div class="src-hdr">
-          <span class="src-hdr-title">📚 Source Library</span>
-          <span style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto">клик → добавить в очередь</span>
+    <div class="sec"><span class="sec-icon">⬡</span>P2P NODE REGISTRY</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Status</th><th>Node</th><th>Address</th><th>Role</th><th>Models</th><th>Heartbeat</th></tr></thead>
+        <tbody id="p2pRows"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+  <!-- ══ METRICS ══ -->
+  <div class="panel" id="panel-metrics">
+  <div class="pscroll">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div class="sec" style="margin-bottom:0;flex:1"><span class="sec-icon">📊</span>SYSTEM METRICS</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--muted)" id="mTs">—</span>
+        <button class="btn btn-x btn-sm" onclick="fetchMetrics()">⟳ Refresh</button>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:24px">
+      <div class="card">
+        <div class="kpi-lbl">CPU Usage</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val" id="mCpu" style="font-size:28px">—</span><span style="font-family:var(--mono);font-size:14px;color:var(--muted)">%</span>
         </div>
-        <div class="src-list">
-          <div class="src-item" onclick="addSource('images')">
-            <div class="src-icon">🖼</div>
-            <div class="src-info">
-              <div class="src-name">Images</div>
-              <div class="src-desc">Picsum · Unsplash · Wikimedia · Pexels</div>
-            </div>
-            <div class="src-badge cc0">CC0</div>
-          </div>
-          <div class="src-item" onclick="addSource('audio')">
-            <div class="src-icon">🎵</div>
-            <div class="src-info">
-              <div class="src-name">Audio</div>
-              <div class="src-desc">Free Music Archive · Jamendo</div>
-            </div>
-            <div class="src-badge free">FREE</div>
-          </div>
-          <div class="src-item" onclick="addSource('docs')">
-            <div class="src-icon">📄</div>
-            <div class="src-info">
-              <div class="src-name">Docs / Code</div>
-              <div class="src-desc">GitHub Raw · Gutenberg · samplefiles.org</div>
-            </div>
-            <div class="src-badge mit">MIT</div>
-          </div>
-          <div class="src-item" onclick="addSource('openapi')">
-            <div class="src-icon">🌍</div>
-            <div class="src-info">
-              <div class="src-name">Open APIs</div>
-              <div class="src-desc">World Bank · UN · OECD · RestCountries</div>
-            </div>
-            <div class="src-badge cc0">NO KEY</div>
-          </div>
-          <div class="src-item" onclick="addSource('geo')">
-            <div class="src-icon">🗺</div>
-            <div class="src-info">
-              <div class="src-name">Geo / IP</div>
-              <div class="src-desc">OpenCage · ipapi.co · WorldTimeAPI</div>
-            </div>
-            <div class="src-badge free">FREE</div>
-          </div>
-          <div class="src-item" onclick="addSource('services')">
-            <div class="src-icon">⚡</div>
-            <div class="src-info">
-              <div class="src-name">Services (API KEY)</div>
-              <div class="src-desc">Clearbit · Bitly · PDF.co · Apify</div>
-            </div>
-            <div class="src-badge key">KEY</div>
-          </div>
+        <div class="prog"><div class="prog-fill pf-g" id="mCpuBar" style="width:0"></div></div>
+      </div>
+      <div class="card card-blue">
+        <div class="kpi-lbl">RAM Usage</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val blue" id="mRam" style="font-size:28px">—</span><span style="font-family:var(--mono);font-size:14px;color:var(--muted)">%</span>
+        </div>
+        <div class="prog"><div class="prog-fill pf-b" id="mRamBar" style="width:0"></div></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px"><span id="mRamUsed">—</span> / <span id="mRamTotal">—</span> GB</div>
+      </div>
+      <div class="card">
+        <div class="kpi-lbl">Disk Usage</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val orange" id="mDisk" style="font-size:28px">—</span><span style="font-family:var(--mono);font-size:14px;color:var(--muted)">%</span>
+        </div>
+        <div class="prog"><div class="prog-fill pf-o" id="mDiskBar" style="width:0"></div></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px">Free: <span id="mDiskFree">—</span> GB</div>
+      </div>
+      <div class="card card-blue">
+        <div class="kpi-lbl">GPU Usage</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val purple" id="mGpu" style="font-size:28px">—</span><span style="font-family:var(--mono);font-size:14px;color:var(--muted)">%</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:8px">Mem: <span id="mGpuMem">—</span></div>
+      </div>
+      <div class="card">
+        <div class="kpi-lbl">CPU Temp</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val orange" id="mTemp" style="font-size:28px">—</span><span style="font-family:var(--mono);font-size:14px;color:var(--muted)">°C</span>
+        </div>
+      </div>
+      <div class="card card-blue">
+        <div class="kpi-lbl">Net Connections</div>
+        <div style="display:flex;align-items:baseline;gap:4px;margin-top:6px">
+          <span class="kpi-val blue" id="mConn" style="font-size:28px">—</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:8px">↑ <span id="mNetSent">—</span> · ↓ <span id="mNetRecv">—</span></div>
+      </div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">🐳</span>DOCKER CONTAINERS</div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th></tr></thead>
+        <tbody id="dockerRows"><tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+  <!-- ══ LOGS ══ -->
+  <div class="panel" id="panel-logs">
+  <div class="pscroll">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <select class="sel" id="logSrc">
+        <option value="brain">Brain API /api/logs</option>
+        <option value="status">Brain /brain/status</option>
+        <option value="server">/api/logs (web server)</option>
+      </select>
+      <button class="btn btn-g btn-sm" id="logToggleBtn" onclick="toggleLogs()">▶ Start</button>
+      <button class="btn btn-x btn-sm" onclick="clearLogs()">⊘ Clear</button>
+      <button class="btn btn-b btn-sm" onclick="fetchLogs()">⟳ Fetch</button>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--muted)">
+        Poll: <span id="logPollInd" style="color:var(--muted)">OFF</span> · 3s
+      </span>
+      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;margin-left:auto">
+        <input type="checkbox" id="logScroll" checked style="accent-color:var(--green)"/> autoscroll
+      </label>
+    </div>
+    <div class="logbox" id="logBox">— ожидание команды —</div>
+  </div>
+  </div>
+
+  <!-- ══ ACTIONS ══ -->
+  <div class="panel" id="panel-actions">
+  <div class="pscroll">
+    <div class="sec"><span class="sec-icon">⚡</span>QUICK ACTIONS</div>
+    <div class="grid gauto2">
+
+      <div class="act-group">
+        <div class="act-group-title">🧠 Brain API</div>
+        <div class="act-row"><button class="btn btn-g btn-sm" onclick="doAction('start-brain','arBrain')">▶ Start Brain</button><div class="ar" id="arBrain">—</div></div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="doAction('restart-brain','arRBrain')">⟳ Restart</button><div class="ar" id="arRBrain">—</div></div>
+        <div class="act-row"><button class="btn btn-x btn-sm" onclick="doAction('brain-health','arBHealth')">❤ Health</button><div class="ar" id="arBHealth">—</div></div>
+      </div>
+
+      <div class="act-group">
+        <div class="act-group-title">☁ Cloudflare</div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="doAction('restart-cloudflared','arCF')">⟳ Restart Cloudflared</button><div class="ar" id="arCF">—</div></div>
+        <div class="act-row"><button class="btn btn-x btn-sm" onclick="doAction('cloudflare-status','arCFS')">ℹ CF Status</button><div class="ar" id="arCFS">—</div></div>
+      </div>
+
+      <div class="act-group">
+        <div class="act-group-title">🖥️ Azure VMs</div>
+        <div class="act-row"><button class="btn btn-g btn-sm" onclick="startVM('AU')">▶ Start AU</button><div class="ar" id="arAU">20.53.240.36 · OFFLINE</div></div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="pingVM('JP1','172.207.209.134')">⟳ Ping JP1</button><div class="ar" id="arJP1">172.207.209.134</div></div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="pingVM('SE','20.240.192.35')">⟳ Ping SE</button><div class="ar" id="arSE">20.240.192.35</div></div>
+      </div>
+
+      <div class="act-group" style="grid-column:1/-1">
+        <div class="act-group-title">⚡ ARGOS Skills (45)</div>
+        <div class="act-row" style="flex-wrap:wrap;gap:6px">
+          <select class="sel" id="skillSel" style="flex:1;min-width:160px">
+            <option value="">— выбрать навык —</option>
+            <option value="web_scrapper">web_scrapper — DDG-поиск</option>
+            <option value="serp_search">serp_search — SerpAPI/DDG</option>
+            <option value="web_explorer">web_explorer — DDG+Wiki+arXiv</option>
+            <option value="content_gen">content_gen — AI-дайджест+Telegram</option>
+            <option value="image_gen">image_gen — Генерация изображений</option>
+            <option value="ai_coder">ai_coder — Генерация кода Ollama</option>
+            <option value="multi_provider_chat">multi_provider_chat — Чат all-провайдеры</option>
+            <option value="huggingface_ai">huggingface_ai — HF Inference</option>
+            <option value="crypto_monitor">crypto_monitor — BTC/ETH мониторинг</option>
+            <option value="system_monitor">system_monitor — CPU/RAM/диск</option>
+            <option value="hardware_intel">hardware_intel — Диагностика железа</option>
+            <option value="net_scanner">net_scanner — Сканер сети</option>
+            <option value="scheduler">scheduler — Задачи (NL)</option>
+            <option value="evolution">evolution — Генерация навыков AI</option>
+            <option value="auto_backup">auto_backup — ZIP-бэкап конфигов</option>
+            <option value="autonomy_fileops">autonomy_fileops — Мониторинг файлов</option>
+            <option value="desktop_actions">desktop_actions — Мышь/клавиатура/скриншот</option>
+            <option value="ebay_parser">ebay_parser — Парсинг eBay</option>
+            <option value="pip_manager">pip_manager — Управление pip/PyPI</option>
+            <option value="smtp_mailer">smtp_mailer — Отправка email SMTP</option>
+            <option value="ton_blockchain">ton_blockchain — TON: баланс/транзакции</option>
+            <option value="shodan_scanner">shodan_scanner — Shodan сканер</option>
+            <option value="iot_watchdog">iot_watchdog — IoT мониторинг</option>
+            <option value="smart_environments">smart_environments — Умный дом</option>
+            <option value="weather">weather — Погода</option>
+            <option value="crypto_utils">crypto_utils — Шифрование/хэши</option>
+            <option value="ga4_analytics">ga4_analytics — Google Analytics 4</option>
+            <option value="argos_patcher">argos_patcher — Авто-патчер ARGOS</option>
+            <option value="browser_conduit">browser_conduit — Буфер обмена→браузер</option>
+            <option value="fastapi_skill">fastapi_skill — FastAPI REST-сервер</option>
+            <option value="firmware_manager">firmware_manager — ESP32/ESP8266 прошивки</option>
+            <option value="network_shadow">network_shadow — Маскировка MAC/hostname</option>
+            <option value="usb_access_point">usb_access_point — USB AP + веб-морда</option>
+            <option value="tg_code_injector">tg_code_injector — Инъекция кода Telegram</option>
+          </select>
+          <button class="btn btn-g btn-sm" onclick="runSkill()">▶ Run</button>
+          <button class="btn btn-x btn-sm" onclick="loadSkillsList()">↻ Reload</button>
+        </div>
+        <textarea class="inp" id="skillInput" rows="2"
+          style="width:100%;margin-top:6px;font-size:11px;resize:vertical"
+          placeholder='Аргументы JSON: {"query":"bitcoin"} или просто текст'></textarea>
+        <div class="ar" id="arSkill" style="margin-top:8px;white-space:pre-wrap;max-height:120px;overflow-y:auto">—</div>
+      </div>
+
+      <div class="act-group">
+        <div class="act-group-title">🦙 Ollama</div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="doAction('ollama-models','arOlla')">📋 List Models</button><div class="ar" id="arOlla">—</div></div>
+        <div class="act-row" style="gap:6px">
+          <button class="btn btn-x btn-sm" onclick="pingOllama(11434,'arOlla')">:11434</button>
+          <button class="btn btn-x btn-sm" onclick="pingOllama(11435,'arOlla')">:11435</button>
+          <button class="btn btn-x btn-sm" onclick="pingOllama(11436,'arOlla')">:11436</button>
         </div>
       </div>
 
+      <div class="act-group">
+        <div class="act-group-title">🔧 System</div>
+        <div class="act-row"><button class="btn btn-b btn-sm" onclick="doAction('metrics','arSys')">📊 Fetch Metrics</button><div class="ar" id="arSys">—</div></div>
+        <div class="act-row"><button class="btn btn-x btn-sm" onclick="doAction('docker-ps','arDocker')">🐳 Docker PS</button><div class="ar" id="arDocker">—</div></div>
+      </div>
+
+    </div>
+
+    <!-- Brain API Command Editor -->
+    <div class="sec" style="margin-top:20px"><span class="sec-icon">🧠</span>BRAIN API — РЕДАКТОР КОМАНД</div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <select class="sel" id="brainEndpointSel" style="flex:1;min-width:180px" onchange="updateBrainCmd()">
+          <option value="GET /health">GET /health — Health check</option>
+          <option value="GET /brain/status">GET /brain/status — Статус Brain</option>
+          <option value="GET /agents">GET /agents — Список агентов</option>
+          <option value="GET /p2p/status">GET /p2p/status — P2P статус</option>
+          <option value="GET /system/status">GET /system/status — Статус системы</option>
+          <option value="POST /analyze">POST /analyze — Анализ данных</option>
+          <option value="POST /coordinate">POST /coordinate — Координация агентов</option>
+          <option value="POST /monitor">POST /monitor — Мониторинг</option>
+          <option value="POST /brain/reset">POST /brain/reset — Сброс Brain</option>
+          <option value="POST /brain/start">POST /brain/start — Запустить Brain</option>
+          <option value="POST /brain/stop">POST /brain/stop — Остановить Brain</option>
+          <option value="GET /docker/status">GET /docker/status — Docker контейнеры</option>
+        </select>
+        <button class="btn btn-g btn-sm" onclick="runBrainCmd()">▶ Execute</button>
+        <button class="btn btn-x btn-sm" onclick="el('brainCmdBody').value='{}'; el('brainCmdOut').textContent='—'">⊘</button>
+      </div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:4px">Request Body (JSON для POST):</div>
+      <textarea class="inp" id="brainCmdBody" rows="3"
+        style="width:100%;font-size:11px;resize:vertical;font-family:var(--mono)"
+        placeholder='{"task":"analyze","data":"..."}'>
+      </textarea>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin:8px 0 4px">Response:</div>
+      <div class="logbox" id="brainCmdOut" style="height:140px;font-size:10px">—</div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ══ FETCH ══ -->
+  <div class="panel" id="panel-fetch">
+  <div class="pscroll">
+    <div class="sec"><span class="sec-icon">⚙</span>CONTENT FETCHER</div>
+
+    <!-- Mode row -->
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px">
+      <div class="card" id="fmCard-offline" style="cursor:pointer;border-color:rgba(0,255,136,.3)" onclick="setFetchMode('offline')">
+        <div style="font-size:20px;margin-bottom:6px">📴</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--green)">OFFLINE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">из локальных источников</div>
+      </div>
+      <div class="card" id="fmCard-free" style="cursor:pointer" onclick="setFetchMode('free')">
+        <div style="font-size:20px;margin-bottom:6px">🆓</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--muted)">FREE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">без API-ключей</div>
+      </div>
+      <div class="card" id="fmCard-safe" style="cursor:pointer" onclick="setFetchMode('safe')">
+        <div style="font-size:20px;margin-bottom:6px">🛡</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--muted)">SAFE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">CC0 / CC / MIT / Apache</div>
+      </div>
+      <div class="card card-blue" style="padding:14px 16px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.1em">Лицензия</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px" id="fLicFilters">
+          <button class="fb act" data-lic="all" onclick="setLic(this,'all')">ALL</button>
+          <button class="fb" data-lic="cc0" onclick="setLic(this,'cc0')">CC0</button>
+          <button class="fb" data-lic="cc" onclick="setLic(this,'cc')">CC BY</button>
+          <button class="fb" data-lic="mit" onclick="setLic(this,'mit')">MIT</button>
+          <button class="fb" data-lic="apache" onclick="setLic(this,'apache')">Apache</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- URL Queue -->
+    <div class="sec"><span class="sec-icon">🔗</span>URL QUEUE</div>
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input class="inp" id="fUrlInput" style="flex:1" placeholder="https://example.com/resource.jpg" onkeydown="if(event.key==='Enter')addFetchUrl()"/>
+        <button class="btn btn-g btn-sm" onclick="addFetchUrl()">+ Add</button>
+        <button class="btn btn-r btn-sm" onclick="removeFetchUrl()">– Del</button>
+        <button class="btn btn-b btn-sm" onclick="runFetch()">⟳ Fetch</button>
+      </div>
+      <div id="fQueue" style="display:flex;flex-direction:column;gap:6px;min-height:40px">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:10px 0;text-align:center" id="fQueueEmpty">— очередь пуста —</div>
+      </div>
+    </div>
+
+    <!-- Source Library -->
+    <div class="sec"><span class="sec-icon">📚</span>SOURCE LIBRARY</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:20px">
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('images')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🖼</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">IMAGES</span>
+          <span class="badge bx" style="margin-left:auto;font-size:9px">CC0</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          OpenVerse · Wikimedia Commons<br>Unsplash · Pexels · Picsum<br>LoremFlickr
+        </div>
+      </div>
+
+      <div class="card card-blue" style="cursor:pointer" onclick="addSourceUrls('audio')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🎵</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">AUDIO</span>
+          <span class="badge bg" style="margin-left:auto;font-size:9px">FREE</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          Free Music Archive<br>Jamendo · CC0 fallback
+        </div>
+      </div>
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('docs')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">📄</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">DOCS / CODE</span>
+          <span class="badge bb" style="margin-left:auto;font-size:9px">MIT</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          GitHub Raw · Project Gutenberg<br>samplefiles.org
+        </div>
+      </div>
+
+      <div class="card card-blue" style="cursor:pointer" onclick="addSourceUrls('apis')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🔌</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">OPEN APIS</span>
+          <span class="badge bg" style="margin-left:auto;font-size:9px">NO KEY</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          World Bank · UN Data · OECD<br>US Census · OpenWeather<br>OpenCage · OpenDataSoft
+        </div>
+      </div>
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('services')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">⚡</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">SERVICES</span>
+          <span class="badge bo" style="margin-left:auto;font-size:9px">KEY</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          Clearbit · Bitly · PDF.co<br>Apify · Twilio · IPStack<br>AbstractAPI · SendGrid
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Result + Saved Files -->
+    <div class="fetch-main-grid">
       <!-- Log -->
-      <div class="log-wrap">
-        <div class="log-hdr">
-          <span class="log-hdr-title">📊 Fetch Log</span>
-          <div style="margin-left:auto;display:flex;gap:6px">
-            <button class="btn btn-x btn-sm" onclick="clearLog()">⊘</button>
-          </div>
-        </div>
-        <div class="logbox" id="fLog">— ожидание —</div>
+      <div>
+        <div class="sec"><span class="sec-icon">📊</span>FETCH LOG</div>
+        <div class="logbox" id="fLog" style="height:220px">— нет результатов —</div>
       </div>
-
-      <!-- Saved files -->
+      <!-- Saved Files panel -->
       <div class="files-wrap">
         <div class="files-hdr">
           <span class="files-hdr-title">💾 Saved Files</span>
-          <span class="badge bb" id="fFilesCount" style="font-size:9px">0</span>
+          <span class="badge bb" id="fFilesCount" style="font-size:9px;margin-left:4px">0</span>
           <div style="margin-left:auto;display:flex;gap:6px">
-            <button class="btn btn-x btn-sm" onclick="loadFiles()">⟳</button>
-            <button class="btn btn-x btn-sm" onclick="openFetchDir()">📂 Folder</button>
+            <button class="btn btn-x btn-sm" onclick="loadFiles()">↻</button>
+            <button class="btn btn-x btn-sm" onclick="window.open('http://localhost:18789/fetched/','_blank')">📂</button>
           </div>
         </div>
         <div class="files-list" id="fFilesList">
-          <div class="files-empty" id="fFilesEmpty">— пока нет сохранённых файлов —</div>
+          <div class="files-empty" id="fFilesEmpty">— нет сохранённых файлов —</div>
         </div>
       </div>
+    </div>
+  </div>
+  </div>
 
-    </div><!-- /right-panel -->
-  </div><!-- /main-grid -->
-
-</div><!-- /scroll -->
-</div><!-- /body -->
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /layout -->
 
 <div class="toast" id="toast"></div>
 
-<!-- ════════════════════════════════ SCRIPT ════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════
+     DATA — API CATALOGUE
+═══════════════════════════════════════════════════════ -->
+<script>
+const APIS = [
+  {name:"Google Gemini API",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://ai.google.dev",desc:"Мультимодальный LLM — текст, код, изображения, видео. 15 RPM, 1M токенов/мин бесплатно.",note:"Заменяет WatsonX! Интеграция в watson_bridge.py",free:true},
+  {name:"Hugging Face Inference",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://huggingface.co/inference-api",desc:"Тысячи моделей: LLM, NLP, CV, Audio, Embeddings через один API. Бесплатный tier.",note:"Уже используется для VectorStore (MiniLM). Расширить на LLM fallback.",free:true},
+  {name:"Cohere API",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://cohere.com",desc:"LLM для NLP: классификация, генерация, эмбеддинги, RAG. Trial key бесплатно.",note:"Fallback вместо WatsonX для AWA-Core",free:true},
+  {name:"Mistral AI",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://console.mistral.ai",desc:"Mistral Large/Small/Codestral. Быстрые open-weight модели. Бесплатный tier.",note:"Хороший fallback для Ollama при офлайн",free:true},
+  {name:"Groq API",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://console.groq.com",desc:"Llama 3, Mixtral, Gemma на LPU — до 750 токенов/с. 30 RPM бесплатно.",note:"Идеальный быстрый fallback для Ollama",free:true},
+  {name:"Cloudflare Workers AI",cat:"AI / LLM",argos:true,hot:true,auth:"key",url:"https://developers.cloudflare.com/workers-ai/",desc:"Serverless inference: LLM, embeddings, STT. 10,000 neurons/day бесплатно.",note:"Хорош для _init_ai_failover как cloud fallback",free:true},
+  {name:"Together AI",cat:"AI / LLM",argos:true,hot:false,auth:"key",url:"https://api.together.xyz",desc:"Llama 3, Mistral, Qwen и др. $1 стартовый кредит бесплатно.",free:true},
+  {name:"Anthropic Claude API",cat:"AI / LLM",argos:false,hot:false,auth:"key",url:"https://console.anthropic.com",desc:"Claude Sonnet/Haiku/Opus. Нет бесплатного tier, дешевле GPT-4.",free:false},
+  {name:"OpenAI API",cat:"AI / LLM",argos:false,hot:false,auth:"key",url:"https://platform.openai.com",desc:"GPT-4o, Whisper, DALL-E. Нет бесплатного tier — только $5 стартовый кредит.",free:false},
+  {name:"NLP Cloud",cat:"NLP",argos:true,hot:true,auth:"key",url:"https://nlpcloud.com",desc:"spaCy + Transformers: NER, sentiment, классификация. Бесплатно 1000 req/мес.",note:"Расширение web_learn — анализ текста",free:true},
+  {name:"LibreTranslate",cat:"NLP",argos:true,hot:true,auth:"nokey",url:"https://libretranslate.com",desc:"Open-source перевод без ключа. Self-hosted или публичный. 30+ языков.",note:"Мультиязычность для ARGOS",free:true},
+  {name:"Perspective API",cat:"NLP",argos:true,hot:false,auth:"key",url:"https://perspectiveapi.com",desc:"Токсичность, оскорбления, угрозы. Бесплатно некоммерческое.",note:"Фильтрация входных данных AWA-Core",free:true},
+  {name:"ParallelDots AI",cat:"NLP",argos:true,hot:false,auth:"key",url:"https://www.paralleldots.com/apis",desc:"Sentiment, emotion, intent, NER. 1000 calls/day бесплатно.",free:true},
+  {name:"Deepgram",cat:"Speech",argos:true,hot:true,auth:"key",url:"https://deepgram.com",desc:"STT real-time + batch. Timestamps, diarization. $200 кредит бесплатно.",note:"Подключение к _init_voice()",free:true},
+  {name:"AssemblyAI",cat:"Speech",argos:true,hot:true,auth:"key",url:"https://assemblyai.com",desc:"Транскрипция, diarization, topic detection. $50 кредит бесплатно.",note:"Расширение voice/vision модулей",free:true},
+  {name:"Whisper (self-hosted)",cat:"Speech",argos:true,hot:true,auth:"nokey",url:"https://github.com/openai/whisper",desc:"Бесплатная open-source STT от OpenAI. Через Ollama или напрямую. Офлайн!",note:"Запускается через Ollama — проверить модель",free:true},
+  {name:"Coqui TTS",cat:"Speech",argos:true,hot:false,auth:"nokey",url:"https://github.com/coqui-ai/TTS",desc:"Open-source TTS офлайн. 17+ языков включая русский.",note:"Локальный TTS для _init_voice()",free:true},
+  {name:"Roboflow Universe",cat:"Vision",argos:true,hot:true,auth:"key",url:"https://universe.roboflow.com",desc:"10,000+ pre-trained CV моделей. 10,000 inferences/мес бесплатно.",note:"Расширение _init_vision()",free:true},
+  {name:"Google Cloud Vision",cat:"Vision",argos:true,hot:false,auth:"key",url:"https://cloud.google.com/vision",desc:"OCR, face/object/landmark detection. $300 кредит при регистрации.",free:true},
+  {name:"Open-Meteo",cat:"Weather",argos:true,hot:true,auth:"nokey",url:"https://open-meteo.com",desc:"Weather API без ключа. 10,000 req/day. Прогноз 14 дней, 100+ переменных.",note:"Лучший для _init_iot() / HomeAssistant",free:true},
+  {name:"OpenWeatherMap",cat:"Weather",argos:true,hot:true,auth:"key",url:"https://openweathermap.org/api",desc:"200,000+ городов, прогноз, алерты. 60 calls/мин бесплатно.",note:"Добавить в HomeAssistant модуль",free:true},
+  {name:"wttr.in",cat:"Weather",argos:true,hot:false,auth:"nokey",url:"https://wttr.in/:help",desc:"Погода без ключа. wttr.in/Moscow?format=j1 мгновенно.",note:"Простейшая интеграция",free:true},
+  {name:"Alpha Vantage",cat:"Finance",argos:true,hot:true,auth:"key",url:"https://www.alphavantage.co",desc:"Акции, форекс, крипто, индикаторы. 25 req/day бесплатно.",note:"Финансовый модуль — real-time market data",free:true},
+  {name:"CoinGecko API",cat:"Finance",argos:true,hot:true,auth:"nokey",url:"https://www.coingecko.com/api/documentation",desc:"10,000+ монет. Цены, объёмы, маркет-кап. 30 calls/мин без ключа.",note:"Мониторинг крипто для IoT",free:true},
+  {name:"Yahoo Finance",cat:"Finance",argos:true,hot:false,auth:"nokey",url:"https://pypi.org/project/yfinance/",desc:"yfinance — акции, ETF, фьючерсы без ключа.",note:"pip install yfinance — без API ключа",free:true},
+  {name:"Nominatim / OSM",cat:"Maps",argos:true,hot:true,auth:"nokey",url:"https://nominatim.org",desc:"Геокодинг без ключа. Self-hosted или публичный.",note:"Геолокация для HomeAssistant, IoT",free:true},
+  {name:"ip-api.com",cat:"Maps",argos:true,hot:true,auth:"nokey",url:"http://ip-api.com/json",desc:"IP-геолокация без ключа. JSON мгновенно. 45 req/мин.",note:"curl http://ip-api.com/json",free:true},
+  {name:"DuckDuckGo Search",cat:"Data",argos:true,hot:true,auth:"nokey",url:"https://pypi.org/project/duckduckgo-search/",desc:"duckduckgo_search без ключа. Уже используется в web_learn!",note:"✓ Уже в ARGOS — обновить версию",free:true},
+  {name:"SerpAPI",cat:"Data",argos:true,hot:true,auth:"key",url:"https://serpapi.com",desc:"Google, Bing, DDG. 100 searches/мес бесплатно.",note:"✓ Уже подключён в ARGOS!",free:true},
+  {name:"Brave Search API",cat:"Data",argos:true,hot:true,auth:"key",url:"https://brave.com/search/api/",desc:"Privacy-first поиск. 2000 req/мес бесплатно.",note:"Замена SerpAPI — privacy-friendly",free:true},
+  {name:"Wikipedia API",cat:"Data",argos:true,hot:true,auth:"nokey",url:"https://en.wikipedia.org/w/api.php",desc:"Полный доступ без ключа. Неограниченно (разумно).",note:"Расширение web_learn — база знаний",free:true},
+  {name:"arXiv API",cat:"Data",argos:true,hot:true,auth:"nokey",url:"https://arxiv.org/help/api/",desc:"Научные статьи AI/ML без ключа. Поиск cs.AI, cs.LG.",note:"Curiosity engine — новые AI исследования",free:true},
+  {name:"NewsAPI",cat:"Data",argos:true,hot:false,auth:"key",url:"https://newsapi.org",desc:"30,000+ источников. 100 req/day бесплатно.",note:"Curiosity — мониторинг новостей",free:true},
+  {name:"GitHub REST API",cat:"Dev",argos:true,hot:true,auth:"key",url:"https://docs.github.com/rest",desc:"Repos, issues, PRs, actions. 5000 req/час с токеном.",note:"✓ GitOps уже использует",free:true},
+  {name:"Cloudflare API",cat:"Dev",argos:true,hot:false,auth:"key",url:"https://developers.cloudflare.com/api/",desc:"DNS, tunnels, Workers, KV. Бесплатный план щедрый.",note:"Cloudflare Tunnel для внешнего доступа",free:true},
+  {name:"Ntfy.sh",cat:"Dev",argos:true,hot:true,auth:"nokey",url:"https://ntfy.sh",desc:"Push без ключа! curl ntfy.sh/argos -d 'Alert!'",note:"Мгновенная интеграция в _init_alerts()",free:true},
+  {name:"Telegram Bot API",cat:"Dev",argos:true,hot:true,auth:"key",url:"https://core.telegram.org/bots/api",desc:"Полностью бесплатный бот API. Без лимитов.",note:"✓ ARGOS Telegram — /статус /логи",free:true},
+  {name:"Docker Hub API",cat:"Dev",argos:true,hot:false,auth:"key",url:"https://docs.docker.com/docker-hub/api/latest/",desc:"Образы, tags, manifests. Watchtower использует!",note:"✓ Добавить мониторинг образов",free:true},
+  {name:"YouTube Data API v3",cat:"Media",argos:true,hot:false,auth:"key",url:"https://developers.google.com/youtube/v3",desc:"Поиск видео, transcripts. 10,000 units/day бесплатно.",note:"web_learn — обучающие видео",free:true},
+  {name:"ipify",cat:"Misc",argos:true,hot:false,auth:"nokey",url:"https://www.ipify.org",desc:"Внешний IP одним запросом. Без ключа, без лимитов.",note:"Сетевой мониторинг",free:true},
+  {name:"WorldTimeAPI",cat:"Misc",argos:true,hot:false,auth:"nokey",url:"http://worldtimeapi.org",desc:"Точное время по timezone без ключа.",note:"Синхронизация в scheduler",free:true},
+  {name:"ZenQuotes API",cat:"Misc",argos:true,hot:false,auth:"nokey",url:"https://zenquotes.io",desc:"Вдохновляющие цитаты без ключа. CORS.",note:"Daily briefing модуль",free:true},
+];
+</script>
+
+<!-- ═══════════════════════════════════════════════════════
+     CONTROLLER — STRICT, NO RECURSION
+═══════════════════════════════════════════════════════ -->
 <script>
 'use strict';
 
-// ── State ────────────────────────────────────────────────────
-let _mode      = 'offline';
-let _lic       = 'all';
-let _queue     = [];       // [{url, type, status}]
-let _statOk    = 0;
-let _statErr   = 0;
-let _running   = false;
-let _stopFlag  = false;
+// ── Navigation ────────────────────────────────────────────────
+const _navItems = document.querySelectorAll('.nav-item');
+const _panels   = document.querySelectorAll('.panel');
+let   _curTab   = 'brain';
+const _inited   = new Set(['brain']); // brain inits on boot
 
-// ── Source catalogue ─────────────────────────────────────────
-const SOURCES = {
-  images:  [
-    'https://picsum.photos/seed/argos1/800/600',
-    'https://picsum.photos/seed/argos2/800/600',
-    'https://picsum.photos/seed/argos3/400/300',
-    'https://source.unsplash.com/random/800x600?nature',
-    'https://commons.wikimedia.org/wiki/Special:Random/File',
-    'https://loremflickr.com/640/480/architecture',
-  ],
-  audio:   [
-    'https://freemusicarchive.org/api/get/tracks.json?limit=5&sort=track_date_created&order=desc',
-    'https://api.jamendo.com/v3.0/tracks/?format=json&limit=5&client_id=b6747d04&order=popularity_total',
-  ],
-  docs:    [
-    'https://raw.githubusercontent.com/torvalds/linux/master/README',
-    'https://raw.githubusercontent.com/python/cpython/main/README.rst',
-    'https://www.gutenberg.org/cache/epub/2701/pg2701.txt',
-    'https://samplefiles.org/sample.txt',
-  ],
-  openapi: [
-    'https://api.worldbank.org/v2/country?format=json&per_page=5',
-    'https://restcountries.com/v3.1/all?fields=name,capital,population&per_page=5',
-    'https://api.open-meteo.com/v1/forecast?latitude=55.75&longitude=37.62&current_weather=true',
-    'https://openlibrary.org/search.json?q=artificial+intelligence&limit=3',
-  ],
-  geo:     [
-    'https://ipapi.co/json/',
-    'https://worldtimeapi.org/api/timezone/Europe/Moscow',
-    'https://nominatim.openstreetmap.org/search?q=Moscow&format=json&limit=3',
-  ],
-  services:[
-    'https://api.ipify.org?format=json',
-    'https://zenquotes.io/api/random',
-    'https://api.adviceslip.com/advice',
-  ],
+const TAB_TITLES = {
+  brain:   ['🧠 BRAIN',   'P2P Neural Network'],
+  system:  ['🌐 SYSTEM',  'OS & Kanban Dashboard'],
+  apis:    ['🆓 FREE APIs','API Catalogue · 43 Entries'],
+  vms:     ['🖥️ VMs',      'Azure Virtual Machines'],
+  p2p:     ['🔗 P2P',      'Ollama Cluster & WireGuard'],
+  metrics: ['📊 METRICS',  'psutil · Docker · GPU'],
+  logs:    ['📝 LOGS',     'Brain API · Live Stream'],
+  actions: ['⚡ ACTIONS',  'Quick System Controls'],
+  fetch:   ['📥 FETCH',   'Content Fetcher · CC0 / Free / Safe'],
 };
 
-// ── Helpers ───────────────────────────────────────────────────
-function el(id){ return document.getElementById(id); }
-function txt(id,v){ const e=el(id); if(e) e.textContent=v; }
+function switchTab(id) {
+  if (id === _curTab && _inited.has(id)) return;
+  _curTab = id;
+  _navItems.forEach(n => n.classList.toggle('active', n.dataset.tab === id));
+  _panels.forEach(p  => p.classList.toggle('active',  p.id === 'panel-' + id));
+  const t = TAB_TITLES[id] || [id, ''];
+  document.getElementById('tbTitle').textContent = t[0];
+  document.getElementById('tbSub').textContent   = t[1];
+  if (!_inited.has(id)) { _inited.add(id); _initTab(id); }
+}
 
+_navItems.forEach(n => n.addEventListener('click', () => switchTab(n.dataset.tab)));
+
+function _initTab(id) {
+  if (id === 'brain')   refreshBrain();
+  if (id === 'metrics') fetchMetrics();
+  if (id === 'p2p')     refreshP2P();
+  if (id === 'vms')     refreshVMs();
+  if (id === 'apis')    renderApis();
+  if (id === 'fetch')   initFetch();
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function el(id)      { return document.getElementById(id); }
+function txt(id, v)  { const e = el(id); if (e) e.textContent = v != null ? v : '—'; }
+function pct(id, v)  { const e = el(id); if (e) e.style.width = Math.min(100, v || 0) + '%'; }
+function dot(id, cls){ const e = el(id); if (e) e.className = 'sdot ' + cls; }
+
+function fmtAgo(iso) {
+  if (!iso) return '—';
+  try {
+    const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+    return s < 60 ? s + 's ago' : s < 3600 ? Math.floor(s / 60) + 'm ago' : Math.floor(s / 3600) + 'h ago';
+  } catch { return iso; }
+}
+function fmtBytes(b) {
+  if (b == null) return '—';
+  if (b > 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b > 1e6) return (b / 1e6).toFixed(1) + ' MB';
+  if (b > 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+// ── Toast ─────────────────────────────────────────────────────
 function toast(msg, ms) {
   const e = el('toast');
   e.textContent = msg;
   e.classList.add('show');
   clearTimeout(e._t);
-  e._t = setTimeout(() => e.classList.remove('show'), ms || 2200);
+  e._t = setTimeout(() => e.classList.remove('show'), ms || 2500);
 }
 
-function appendLog(msg, cls) {
-  const box = el('fLog');
-  if (!box) return;
-  const ts = new Date().toLocaleTimeString('ru-RU');
-  if (box.textContent === '— ожидание —') box.innerHTML = '';
-  const line = document.createElement('span');
-  line.innerHTML =
-    `<span class="lt">[${ts}]</span> ` +
-    `<span class="${cls||'li'}">${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>\n`;
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
+// ── Clock ─────────────────────────────────────────────────────
+(function tick() {
+  txt('clock', new Date().toLocaleTimeString('ru-RU', {hour12: false}));
+  setTimeout(tick, 1000);
+})();
+
+// ── Countdown ─────────────────────────────────────────────────
+let _cd = 10;
+setInterval(() => {
+  _cd = _cd <= 1 ? 10 : _cd - 1;
+  txt('cdown', '⟳ auto ' + _cd + 's');
+}, 1000);
+
+// ── TAB: BRAIN ────────────────────────────────────────────────
+async function refreshBrain() {
+  // Reset to loading state
+  txt('bTotal', '…'); txt('bOnline', '…'); txt('bOffline', '…');
+
+  // Nodes
+  fetch('http://localhost:5010/brain/nodes', {
+    cache: 'no-store', signal: AbortSignal.timeout(4000)
+  }).then(r => r.json()).then(d => {
+    txt('bTotal',   d.total   ?? 0);
+    txt('bOnline',  d.online  ?? 0);
+    txt('bOffline', d.offline ?? 0);
+    const rows = (d.nodes || []).map(n => {
+      const st   = n.status === 'online' ? 'ok' : 'off';
+      const caps = (n.capabilities || []).map(c => `<span class="badge bb">${c}</span>`).join(' ');
+      const mods = (n.models || []).map(m => `<span class="badge bx">${m}</span>`).join(' ') || '—';
+      return `<tr>
+        <td><span class="dot ${st}" style="margin-right:6px"></span>${n.status || '?'}</td>
+        <td><b style="font-family:var(--mono)">${n.node_id}</b></td>
+        <td><code>${n.address || '—'}</code></td>
+        <td>${(n.meta && n.meta.role) || '—'} ${caps}</td>
+        <td>${mods}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${fmtAgo(n.last_heartbeat)}</td>
+      </tr>`;
+    }).join('');
+    el('bRows').innerHTML = rows ||
+      '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Нет узлов</td></tr>';
+    dot('bApiDot', 'g'); txt('bApiTxt', 'Brain API :5010');
+    txt('bApiStatus', 'online · ' + new Date().toLocaleTimeString('ru-RU'));
+    dot('sbBrainDot', 'g'); txt('sbBrainTxt', 'ON');
+    el('brainPill').className = 'pill g';
+    txt('brainPillTxt', 'BRAIN ON');
+  }).catch(e => {
+    const bT = el('bTotal'); if(bT){bT.textContent='✗';bT.style.color='var(--red2)'}
+    const bO = el('bOnline'); if(bO){bO.textContent='0';bO.style.color='var(--muted)'}
+    const bF = el('bOffline'); if(bF){bF.textContent='0';bF.style.color='var(--muted)'}
+    el('bRows').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red2);padding:30px">${e.message}</td></tr>`;
+    dot('bApiDot', 'r'); txt('bApiStatus', 'offline · ' + e.message);
+    dot('sbBrainDot', 'r'); txt('sbBrainTxt', 'OFF');
+    el('brainPill').className = 'pill r';
+    txt('brainPillTxt', 'BRAIN OFF');
+  });
+
+  // Health
+  fetch('http://localhost:5010/health', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
+    .then(r => r.json())
+    .then(d => {
+      dot('shBrain', 'g');
+      txt('shBrainV', '✓ ' + JSON.stringify(d).substring(0, 40));
+    })
+    .catch(() => { dot('shBrain', 'r'); txt('shBrainV', '✗ offline'); });
+
+  // Ollama
+  fetch('http://localhost:11434/api/tags', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
+    .then(r => r.json())
+    .then(d => {
+      const m = (d.models || []).map(x => x.name || x.model || '').slice(0, 3).join(', ') || 'нет моделей';
+      dot('shOllama', 'g'); txt('shOllamaV', '✓ ' + m);
+      dot('sbOllDot', 'g'); txt('sbOllTxt', (d.models || []).length + ' mdl');
+      el('ollamaPill').className = 'pill g';
+      txt('ollamaPillTxt', 'Ollama ON');
+    })
+    .catch(() => {
+      dot('shOllama', 'r'); txt('shOllamaV', '✗ offline');
+      dot('sbOllDot', 'r'); txt('sbOllTxt', 'OFF');
+      el('ollamaPill').className = 'pill r';
+      txt('ollamaPillTxt', 'Ollama OFF');
+    });
+
+  // Compute
+  fetch('http://localhost:8002/health', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
+    .then(r => { dot('shCompute', r.ok ? 'g' : 'o'); txt('shComputeV', r.ok ? '✓ online' : '⚠ ' + r.status); })
+    .catch(() => { dot('shCompute', 'r'); txt('shComputeV', '✗ offline'); });
+
 }
 
-function clearLog() {
-  const box = el('fLog');
-  box.innerHTML = '';
-  appendLog('Log cleared', 'lt');
+// ── TAB: FREE APIs ────────────────────────────────────────────
+let _aCat = 'all', _aQ = '';
+
+function authTag(a) {
+  if (a === 'nokey') return '<span class="at at-nokey">NO KEY</span>';
+  return '<span class="at at-key">API KEY</span>';
 }
 
-function detectType(url) {
-  if (/\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?|$)/i.test(url) ||
-      /picsum|unsplash|pexels|loremflickr|wikimedia|openverse/i.test(url)) return 'IMG';
-  if (/\.(mp3|wav|ogg|flac|m4a)(\?|$)/i.test(url) ||
-      /jamendo|freemusicarchive|soundcloud/i.test(url)) return 'AUDIO';
-  if (/\.(pdf)(\?|$)/i.test(url) || /pdf\.co|gutenberg.*\.pdf/i.test(url)) return 'PDF';
-  if (/\.(js|ts|py|sh|rb|go|java|cpp|c|rs)(\?|$)/i.test(url) ||
-      /raw\.githubusercontent|gist\.github/i.test(url)) return 'CODE';
-  if (/\.(json|xml|yaml|yml|csv)(\?|$)/i.test(url) ||
-      /api\.|\/api\/|format=json|\.json/i.test(url)) return 'JSON';
-  if (/\.(txt|md|rst|html|htm)(\?|$)/i.test(url)) return 'DOC';
+function renderApis() {
+  const filtered = APIS.filter(a => {
+    const mc = _aCat === 'all' || (_aCat === 'argos' && a.argos) || a.cat === _aCat;
+    const q  = _aQ.toLowerCase();
+    return mc && (!q || a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || (a.note || '').toLowerCase().includes(q));
+  });
+  txt('aShown', filtered.length);
+  txt('aTotal', APIS.length);
+  txt('nbApis', filtered.length);
+  el('aGrid').innerHTML = filtered.length
+    ? filtered.map(a => `
+      <div class="api-card${a.hot ? ' hot' : ''}">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+          <div class="api-name">${a.name}</div>
+          <div class="api-tags">
+            ${a.hot  ? '<span class="at at-hot">HOT</span>' : ''}
+            ${a.argos? '<span class="at at-argos">ARGOS✓</span>' : ''}
+            ${a.free ? '<span class="at at-free">FREE</span>' : '<span class="at at-paid">PAID</span>'}
+            ${authTag(a.auth)}
+          </div>
+        </div>
+        <div class="api-desc">${a.desc}</div>
+        ${a.note ? `<div class="api-note">⚡ ${a.note}</div>` : ''}
+        <div class="api-meta">
+          <span class="api-cat">${a.cat}</span>
+          <a class="api-url" href="${a.url}" target="_blank" rel="noopener">${a.url.replace(/https?:\/\//, '').split('/')[0]}</a>
+        </div>
+      </div>`).join('')
+    : '<div class="no-r">НЕТ РЕЗУЛЬТАТОВ</div>';
+}
+
+el('aFilters').addEventListener('click', e => {
+  const btn = e.target.closest('.fb');
+  if (!btn) return;
+  document.querySelectorAll('#aFilters .fb').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+  _aCat = btn.dataset.cat;
+  renderApis();
+});
+el('aSearch').addEventListener('input', e => { _aQ = e.target.value; renderApis(); });
+
+// ── TAB: VMs ──────────────────────────────────────────────────
+const VM_MAP = {
+  AU:  {ip: '20.53.240.36',    region: 'Australia East', online: false},
+  JP1: {ip: '172.207.209.134', region: 'Japan East',     online: true},
+  JP2: {ip: '40.81.208.101',   region: 'Japan West',     online: true},
+  SE:  {ip: '20.240.192.35',   region: 'Sweden Central', online: true},
+};
+
+function setVMStatus(name, online, msg) {
+  const card  = el('vmcard-' + name);
+  const dotEl = el('vmd-' + name);
+  const badge = el('vmb-' + name);
+  if (card)  { card.className = 'vmcard ' + (online ? 'vm-on' : 'vm-off'); }
+  if (dotEl) { dotEl.className = 'dot ' + (online ? 'ok' : 'off'); }
+  if (badge) { badge.className = 'badge ' + (online ? 'bg' : 'br'); badge.textContent = online ? 'ONLINE' : 'OFFLINE'; }
+}
+
+async function pingVM(name, ip) {
+  const pingEl = el('vmp-' + name);
+  if (pingEl) pingEl.textContent = 'pinging…';
+  const t0 = Date.now();
+  try {
+    await fetch('http://' + ip + '/', {mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(4000)});
+    const ms = Date.now() - t0;
+    const msg = 'reachable · ' + ms + 'ms';
+    if (pingEl) pingEl.textContent = msg;
+    const arMap = {AU: 'arAU', JP1: 'arJP1', JP2: 'arJP1', SE: 'arSE'};
+    if (el(arMap[name])) el(arMap[name]).textContent = msg;
+    setVMStatus(name, true, msg);
+    toast(name + ': ' + msg);
+  } catch {
+    const msg = 'timeout / unreachable';
+    if (pingEl) pingEl.textContent = msg;
+    setVMStatus(name, false, msg);
+    toast(name + ': ' + msg);
+  }
+  const ts = el('vmts-' + name);
+  if (ts) ts.textContent = new Date().toLocaleTimeString('ru-RU');
+}
+
+function startVM(name) {
+  const arEl = el('arAU');
+  if (arEl) arEl.textContent = 'запуск…';
+  fetch('/api/action/start-vm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({vm: name}), signal: AbortSignal.timeout(10000)
+  }).then(r => r.json()).then(d => {
+    const msg = d.message || JSON.stringify(d).substring(0, 60);
+    if (arEl) arEl.textContent = msg;
+    toast('Start VM ' + name + ': ' + msg);
+  }).catch(e => {
+    if (arEl) arEl.textContent = e.message;
+    toast('Error: ' + e.message);
+  });
+}
+
+function copySSH(name, ip) {
+  const cmd = 'ssh argos@' + ip;
+  navigator.clipboard?.writeText(cmd).catch(() => {});
+  toast('Скопировано: ' + cmd);
+}
+
+function refreshVMs() {
+  ['JP1', 'JP2', 'SE'].forEach(name => {
+    fetch('http://' + VM_MAP[name].ip + ':11434/api/tags', {
+      cache: 'no-store', signal: AbortSignal.timeout(4000)
+    }).then(r => r.json()).then(d => {
+      const n = (d.models || []).length;
+      const e = el('vmolla-' + name);
+      if (e) { e.className = 'badge bb'; e.textContent = n + ' models'; }
+    }).catch(() => {
+      const e = el('vmolla-' + name);
+      if (e) { e.className = 'badge bx'; e.textContent = 'N/A'; }
+    });
+    const ts = el('vmts-' + name);
+    if (ts) ts.textContent = new Date().toLocaleTimeString('ru-RU');
+  });
+}
+
+// ── TAB: P2P ──────────────────────────────────────────────────
+async function fetchOllama(port) {
+  const sEl = el('os-' + port), mEl = el('om-' + port);
+  try {
+    const r = await fetch('http://localhost:' + port + '/api/tags', {
+      cache: 'no-store', signal: AbortSignal.timeout(3000)
+    });
+    const d = await r.json();
+    const mods = (d.models || []).map(m => m.name || m.model || '').join(', ') || 'нет моделей';
+    if (sEl) { sEl.className = 'sdot g'; }
+    if (mEl) mEl.textContent = mods;
+  } catch {
+    if (sEl) { sEl.className = 'sdot r'; }
+    if (mEl) mEl.textContent = '—';
+  }
+}
+
+async function refreshP2P() {
+  fetchOllama(11434); fetchOllama(11435); fetchOllama(11436);
+
+  fetch('http://localhost:5010/brain/nodes', {cache: 'no-store', signal: AbortSignal.timeout(4000)})
+    .then(r => r.json()).then(d => {
+      el('p2pRows').innerHTML = (d.nodes || []).map(n => {
+        const st   = n.status === 'online' ? 'ok' : 'off';
+        const caps = (n.capabilities || []).map(c => `<span class="badge bb">${c}</span>`).join(' ');
+        const mods = (n.models || []).map(m => `<span class="badge bx">${m}</span>`).join(' ') || '—';
+        return `<tr>
+          <td><span class="dot ${st}" style="margin-right:6px"></span>${n.status}</td>
+          <td><b style="font-family:var(--mono)">${n.node_id}</b></td>
+          <td><code>${n.address || '—'}</code></td>
+          <td>${(n.meta && n.meta.role) || '—'} ${caps}</td>
+          <td>${mods}</td>
+          <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${fmtAgo(n.last_heartbeat)}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Нет узлов</td></tr>';
+    }).catch(e => {
+      el('p2pRows').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red2);padding:24px">${e.message}</td></tr>`;
+    });
+
+  fetch('/api/wg/peers', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
+    .then(r => r.json()).then(d => {
+      const peers = Array.isArray(d) ? d : (d.peers || []);
+      el('wgRows').innerHTML = peers.length
+        ? peers.map(p => `<tr>
+            <td style="font-family:var(--mono);font-size:11px">${(p.public_key || p.peer || '—').substring(0, 20)}…</td>
+            <td><code>${p.endpoint || '—'}</code></td>
+            <td><code>${(p.allowed_ips || []).join(', ') || '—'}</code></td>
+            <td><span class="badge ${p.status === 'online' ? 'bg' : 'bx'}">${p.status || '?'}</span></td>
+            <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${fmtAgo(p.last_handshake)}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">WG API недоступен</td></tr>';
+    }).catch(() => {
+      el('wgRows').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">WG peers недоступны</td></tr>';
+    });
+}
+
+// ── TAB: METRICS ──────────────────────────────────────────────
+async function fetchMetrics() {
+  try {
+    const r = await fetch('/api/metrics', {cache: 'no-store', signal: AbortSignal.timeout(8000)});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    txt('mCpu', d.cpu_percent != null ? d.cpu_percent.toFixed(1) : '—');
+    pct('mCpuBar', d.cpu_percent);
+    txt('mRam', d.ram_percent != null ? d.ram_percent.toFixed(1) : '—');
+    pct('mRamBar', d.ram_percent);
+    txt('mRamUsed',  d.ram_used_gb  != null ? d.ram_used_gb.toFixed(1)  : '—');
+    txt('mRamTotal', d.ram_total_gb != null ? d.ram_total_gb.toFixed(1) : '—');
+    txt('mDisk', d.disk_percent != null ? d.disk_percent.toFixed(1) : '—');
+    pct('mDiskBar', d.disk_percent);
+    txt('mDiskFree', d.disk_free_gb != null ? d.disk_free_gb.toFixed(1) : '—');
+    txt('mGpu', d.gpu_percent != null ? d.gpu_percent.toFixed(1) : 'N/A');
+    txt('mGpuMem', d.gpu_mem_used != null ? d.gpu_mem_used + ' / ' + d.gpu_mem_total + ' MB' : '—');
+    txt('mTemp', d.cpu_temp != null ? d.cpu_temp.toFixed(1) : 'N/A');
+    txt('mConn', d.net_connections ?? '—');
+    txt('mNetSent', fmtBytes(d.net_bytes_sent));
+    txt('mNetRecv', fmtBytes(d.net_bytes_recv));
+
+    if (Array.isArray(d.docker)) {
+      el('dockerRows').innerHTML = d.docker.length
+        ? d.docker.map(c => `<tr>
+            <td style="font-family:var(--mono);font-weight:600">${c.name || '—'}</td>
+            <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${(c.image || '').split(':')[0]}</td>
+            <td><span class="badge ${c.status === 'running' ? 'bg' : 'bx'}">${c.status || '—'}</span></td>
+            <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${c.ports || '—'}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px">нет контейнеров</td></tr>';
+    }
+    txt('mTs', new Date().toLocaleTimeString('ru-RU'));
+  } catch (e) {
+    txt('mTs', '✗ ' + e.message);
+  }
+}
+
+// ── TAB: LOGS ─────────────────────────────────────────────────
+let _logInterval = null;
+
+function clearLogs() { el('logBox').innerHTML = ''; }
+
+function appendLog(text) {
+  const box = el('logBox');
+  const ts  = `<span class="lt">[${new Date().toLocaleTimeString('ru-RU')}] </span>`;
+  const html = text.split('\n').map(line => {
+    const s = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if (/error|exception|traceback|fail/i.test(line)) return `<span class="le">${s}</span>`;
+    if (/warn/i.test(line))                           return `<span class="lw">${s}</span>`;
+    if (/ok|success|start|running/i.test(line))       return `<span class="ls">${s}</span>`;
+    if (/info|debug|\d{2}:\d{2}:\d{2}/.test(line))   return `<span class="li">${s}</span>`;
+    return s;
+  }).join('\n');
+  box.innerHTML += ts + html + '\n';
+  if (el('logScroll').checked) box.scrollTop = box.scrollHeight;
+}
+
+async function fetchLogs() {
+  const src  = el('logSrc').value;
+  const urls = {brain: 'http://localhost:5010/api/logs', status: 'http://localhost:5010/brain/status', server: '/api/logs'};
+  try {
+    const r = await fetch(urls[src] || urls.brain, {cache: 'no-store', signal: AbortSignal.timeout(3000)});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json().catch(async () => ({text: await r.text()}));
+    const text = Array.isArray(d) ? d.join('\n') : (d.logs || d.text || JSON.stringify(d, null, 2));
+    appendLog(text);
+  } catch (e) { appendLog('⚠ ' + e.message); }
+}
+
+function toggleLogs() {
+  if (_logInterval) {
+    clearInterval(_logInterval); _logInterval = null;
+    txt('logToggleBtn', '▶ Start');
+    el('logPollInd').style.color = 'var(--muted)';
+    txt('logPollInd', 'OFF');
+  } else {
+    txt('logToggleBtn', '⏹ Stop');
+    el('logPollInd').style.color = 'var(--green)';
+    txt('logPollInd', 'LIVE');
+    fetchLogs();
+    _logInterval = setInterval(fetchLogs, 3000);
+  }
+}
+
+// ── TAB: ACTIONS ──────────────────────────────────────────────
+const ACTION_URLS = {
+  'start-brain':         ['/api/action/start-brain',         'POST'],
+  'restart-brain':       ['/api/action/restart-brain',       'POST'],
+  'brain-health':        ['/api/health',                     'GET'],
+  'restart-cloudflared': ['/api/action/restart-cloudflared', 'POST'],
+  'cloudflare-status':   ['/api/action/cf-status',           'GET'],
+  'ollama-models':       ['/api/ollama/tags',                'GET'],
+  'metrics':             ['/api/metrics',                    'GET'],
+  'docker-ps':           ['/api/docker',                     'GET'],
+};
+
+async function doAction(name, resultId) {
+  const info = ACTION_URLS[name];
+  const rEl  = resultId ? el(resultId) : null;
+  if (rEl) rEl.textContent = 'загрузка…';
+  if (!info) { toast('Unknown action: ' + name); return; }
+  try {
+    const r = await fetch(info[0], {method: info[1], cache: 'no-store', signal: AbortSignal.timeout(10000)});
+    const text = await r.text();
+    let msg;
+    try { const d = JSON.parse(text); msg = d.message || d.ok || JSON.stringify(d).substring(0, 80); }
+    catch { msg = text.substring(0, 80); }
+    if (rEl) rEl.textContent = msg;
+    toast(name + ': ' + msg);
+  } catch (e) {
+    if (rEl) rEl.textContent = '✗ ' + e.message;
+    toast('Error: ' + e.message);
+  }
+}
+
+async function pingOllama(port, resultId) {
+  const rEl = resultId ? el(resultId) : null;
+  if (rEl) rEl.textContent = 'pinging :' + port + '…';
+  try {
+    const r = await fetch('http://localhost:' + port + '/api/tags', {
+      cache: 'no-store', signal: AbortSignal.timeout(3000)
+    });
+    const d    = await r.json();
+    const mods = (d.models || []).map(m => m.name || m.model || '').join(', ') || 'нет моделей';
+    const msg  = ':' + port + ' ONLINE · ' + mods;
+    if (rEl) rEl.textContent = msg;
+    toast(msg);
+  } catch (e) {
+    const msg = ':' + port + ' OFFLINE · ' + e.message;
+    if (rEl) rEl.textContent = msg;
+  }
+}
+
+async function runSkill() {
+  const skill = el('skillSel').value;
+  const rEl   = el('arSkill');
+  if (!skill) { toast('Выбери навык'); return; }
+  rEl.textContent = '⟳ запуск…';
+
+  // Parse input
+  let body = {skill};
+  const rawInput = (el('skillInput') ? el('skillInput').value.trim() : '');
+  if (rawInput) {
+    try { Object.assign(body, JSON.parse(rawInput)); }
+    catch { body.input = rawInput; }
+  }
+
+  try {
+    const r = await fetch('/api/action/run-skill', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body), signal: AbortSignal.timeout(60000)
+    });
+    const d = await r.json();
+    const out = typeof d === 'object' ? JSON.stringify(d, null, 2) : String(d);
+    rEl.textContent = out.substring(0, 800);
+    toast('✓ ' + skill);
+  } catch (e) { rEl.textContent = '✗ ' + e.message; toast('Ошибка: ' + e.message); }
+}
+
+async function loadSkillsList() {
+  // Reload skills from Brain API
+  try {
+    const r = await fetch('/api/brain/skills', {cache:'no-store', signal:AbortSignal.timeout(5000)});
+    const d = await r.json();
+    const sel = el('skillSel');
+    if (d.skills && sel) {
+      while (sel.options.length > 1) sel.remove(1);
+      d.skills.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.name || s;
+        opt.textContent = (s.name || s) + (s.description ? ' — ' + s.description.slice(0,40) : '');
+        sel.appendChild(opt);
+      });
+      toast('Skills обновлены: ' + d.skills.length);
+    }
+  } catch(e) { toast('Brain недоступен — список из кэша'); }
+}
+
+function updateBrainCmd() {
+  const sel = el('brainEndpointSel');
+  if (!sel) return;
+  const val = sel.value;
+  const body = el('brainCmdBody');
+  if (!body) return;
+  if (val.startsWith('POST /analyze')) body.value = '{"task": "analyze", "data": "тестовый запрос"}';
+  else if (val.startsWith('POST /coordinate')) body.value = '{"task": "coordinate", "agents": ["master", "analyst"]}';
+  else if (val.startsWith('POST /monitor')) body.value = '{"interval": 5, "metrics": ["cpu", "ram"]}';
+  else if (val.startsWith('POST')) body.value = '{}';
+  else body.value = '';
+}
+
+async function runBrainCmd() {
+  const sel = el('brainEndpointSel');
+  const out = el('brainCmdOut');
+  if (!sel || !out) return;
+  const [method, path] = sel.value.split(' ');
+  out.textContent = '⟳ executing…';
+
+  const url = '/api/brain' + path.replace('/brain','') ;
+  const opts = {method, headers: {'Content-Type': 'application/json'}, signal: AbortSignal.timeout(15000)};
+  if (method === 'POST') {
+    try { opts.body = el('brainCmdBody').value || '{}'; } catch {}
+  }
+  try {
+    const r = await fetch(url, opts);
+    const text = await r.text();
+    let pretty;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { pretty = text; }
+    out.textContent = '[' + r.status + '] ' + url + '\n\n' + pretty.substring(0, 1200);
+    out.scrollTop = 0;
+    toast('✓ ' + method + ' ' + path + ' → ' + r.status);
+  } catch(e) {
+    out.textContent = '✗ ' + e.message;
+    toast('Error: ' + e.message);
+  }
+}
+
+// ── TAB: FETCH ────────────────────────────────────────────────
+const FETCH_SOURCES = {
+  images:   ['https://picsum.photos/400/300','https://source.unsplash.com/random/400x300','https://commons.wikimedia.org/wiki/Special:Random/File'],
+  audio:    ['https://freemusicarchive.org/api/get/tracks.json?limit=5','https://api.jamendo.com/v3.0/tracks/?format=json&limit=5&client_id=b6747d04'],
+  docs:     ['https://raw.githubusercontent.com/torvalds/linux/master/README','https://www.gutenberg.org/files/2701/2701-h/2701-h.htm'],
+  apis:     ['https://api.worldbank.org/v2/country?format=json&per_page=5','https://restcountries.com/v3.1/all?fields=name,capital,population'],
+  services: ['https://ipapi.co/json/','https://worldtimeapi.org/api/timezone/Europe/Moscow'],
+};
+
+let _fetchMode = 'offline';
+let _fetchLic  = 'all';
+let _fetchQueue = [];
+
+function initFetch() {
+  setFetchMode('offline');
+  loadFiles();
+}
+
+function setFetchMode(mode) {
+  _fetchMode = mode;
+  ['offline','free','safe'].forEach(m => {
+    const c = el('fmCard-'+m);
+    if (!c) return;
+    if (m === mode) {
+      c.style.borderColor = 'rgba(0,255,136,.35)';
+      c.querySelector('.kpi-lbl, div[style*="font-weight:700"]') &&
+        (c.querySelector('div[style*="font-weight:700"]').style.color = 'var(--green)');
+    } else {
+      c.style.borderColor = 'rgba(0,255,136,.1)';
+    }
+  });
+  appendFLog('ℹ MODE → ' + mode.toUpperCase());
+}
+
+function setLic(btn, lic) {
+  _fetchLic = lic;
+  el('fLicFilters').querySelectorAll('.fb').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+  appendFLog('ℹ LICENCE → ' + lic.toUpperCase());
+}
+
+function addFetchUrl() {
+  const inp = el('fUrlInput');
+  const url = inp.value.trim();
+  if (!url) { toast('Введи URL'); return; }
+  _fetchQueue.push(url);
+  inp.value = '';
+  renderFQueue();
+  appendFLog('+ ' + url);
+}
+
+function removeFetchUrl() {
+  if (!_fetchQueue.length) { toast('Очередь пуста'); return; }
+  const removed = _fetchQueue.pop();
+  renderFQueue();
+  appendFLog('– ' + removed);
+}
+
+function addSourceUrls(type) {
+  const urls = FETCH_SOURCES[type] || [];
+  urls.forEach(u => _fetchQueue.push(u));
+  renderFQueue();
+  appendFLog('+ SOURCE «' + type.toUpperCase() + '» → ' + urls.length + ' URL');
+  toast('Добавлено ' + urls.length + ' источников: ' + type);
+}
+
+function renderFQueue() {
+  const q = el('fQueue');
+  const empty = el('fQueueEmpty');
+  if (!_fetchQueue.length) {
+    if (empty) empty.style.display = 'block';
+    const items = q.querySelectorAll('.fq-item');
+    items.forEach(i => i.remove());
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  // Remove old items, re-render
+  q.querySelectorAll('.fq-item').forEach(i => i.remove());
+  _fetchQueue.forEach((url, idx) => {
+    const d = document.createElement('div');
+    d.className = 'fq-item';
+    d.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(0,0,0,.3);border-radius:5px;border:1px solid rgba(75,96,128,.15)';
+    d.innerHTML = `<span style="font-family:var(--mono);font-size:9px;color:var(--muted);min-width:18px">${idx+1}</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${url}</span>
+      <span style="font-family:var(--mono);font-size:9px;padding:1px 6px;background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.15);border-radius:3px;color:var(--cyan2)">${_detectType(url)}</span>`;
+    q.appendChild(d);
+  });
+}
+
+function _detectType(url) {
+  if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || /picsum|unsplash|wikimedia|pexels/i.test(url)) return 'IMG';
+  if (/\.(mp3|wav|ogg|flac)$/i.test(url) || /jamendo|freemusicarchive/i.test(url)) return 'AUDIO';
+  if (/\.(pdf)$/i.test(url) || /gutenberg|pdf\.co/i.test(url)) return 'PDF';
+  if (/\.(js|py|ts|sh|json|yaml)$/i.test(url) || /github\.com|raw\.githubusercontent/i.test(url)) return 'CODE';
+  if (/api\.|\/api\/|\.json|format=json/i.test(url)) return 'JSON';
   return 'FILE';
 }
 
-// ── Mode ──────────────────────────────────────────────────────
-function setMode(m) {
-  _mode = m;
-  ['offline','free','safe'].forEach(x => {
-    el('mc-'+x)?.classList.toggle('active', x === m);
-  });
-  txt('qMode', 'MODE: ' + m.toUpperCase());
-  appendLog('MODE → ' + m.toUpperCase(), 'li');
+function appendFLog(msg) {
+  const box = el('fLog');
+  if (!box) return;
+  const ts = new Date().toLocaleTimeString('ru-RU');
+  const isErr = /error|fail|✗/i.test(msg);
+  const isOk  = /ok|success|\+\s/i.test(msg);
+  const cls   = isErr ? 'le' : isOk ? 'ls' : 'li';
+  if (box.textContent === '— нет результатов —') box.innerHTML = '';
+  box.innerHTML += `<span class="lt">[${ts}]</span> <span class="${cls}">${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>\n`;
+  box.scrollTop = box.scrollHeight;
 }
 
-// ── Licence ───────────────────────────────────────────────────
-el('licFilters').addEventListener('click', e => {
-  const b = e.target.closest('.fb');
-  if (!b) return;
-  el('licFilters').querySelectorAll('.fb').forEach(x => x.classList.remove('act'));
-  b.classList.add('act');
-  _lic = b.dataset.lic;
-  appendLog('LIC FILTER → ' + _lic.toUpperCase(), 'li');
-});
-
-// ── Queue ─────────────────────────────────────────────────────
-function addUrl() {
-  const raw = el('urlIn').value.trim();
-  if (!raw) { toast('Введи URL'); return; }
-  const urls = raw.split(/[\n,]+/).map(u => u.trim()).filter(Boolean);
-  urls.forEach(url => {
-    if (!url.startsWith('http')) url = 'https://' + url;
-    _queue.push({ url, type: detectType(url), status: 'idle' });
-    appendLog('+ ' + url, 'ls');
-  });
-  el('urlIn').value = '';
-  renderQueue();
-  toast('Добавлено: ' + urls.length);
-}
-
-function addSource(type) {
-  const urls = SOURCES[type] || [];
-  urls.forEach(url => _queue.push({ url, type: detectType(url), status: 'idle' }));
-  renderQueue();
-  appendLog('+ SOURCE [' + type.toUpperCase() + '] → ' + urls.length + ' URLs', 'ls');
-  toast('+ ' + urls.length + ' от «' + type + '»');
-}
-
-function clearQueue() {
-  _queue = [];
-  _statOk = 0; _statErr = 0;
-  renderQueue(); updateStats();
-  appendLog('Queue cleared', 'lt');
-}
-
-function removeSelected() {
-  _queue = _queue.filter(q => q.status !== 'idle');
-  renderQueue();
-  appendLog('Removed idle items', 'lt');
-}
-
-function sortQueue() {
-  _queue.sort((a,b) => a.type.localeCompare(b.type));
-  renderQueue();
-  appendLog('Queue sorted by type', 'li');
-}
-
-function dedupQueue() {
-  const seen = new Set();
-  const before = _queue.length;
-  _queue = _queue.filter(q => seen.has(q.url) ? false : seen.add(q.url));
-  renderQueue();
-  appendLog('Dedup: removed ' + (before - _queue.length) + ' duplicates', 'li');
-  toast('Дубликатов удалено: ' + (before - _queue.length));
-}
-
-function exportQueue() {
-  const txt = _queue.map(q => q.url).join('\n');
-  navigator.clipboard?.writeText(txt).then(() => toast('URLs скопированы в буфер')).catch(() => {});
-  appendLog('Exported ' + _queue.length + ' URLs to clipboard', 'li');
-}
-
-function renderQueue() {
-  const list  = el('qList');
-  const empty = el('qEmpty');
-  const count = _queue.length;
-  txt('qCount', count);
-  updateStats();
-
-  empty.style.display = count ? 'none' : 'block';
-
-  // Remove old items
-  list.querySelectorAll('.qi').forEach(i => i.remove());
-
-  _queue.forEach((item, idx) => {
-    const d = document.createElement('div');
-    d.className = 'qi';
-    d.dataset.idx = idx;
-    d.innerHTML =
-      `<div class="qi-num">${idx+1}</div>` +
-      `<div class="qi-url" title="${item.url}">${item.url}</div>` +
-      `<div class="qi-type ${item.type}">${item.type}</div>` +
-      `<div class="qi-status ${item.status}" title="${item.status}"></div>` +
-      `<div class="qi-del" onclick="removeItem(${idx})" title="Remove">×</div>`;
-    list.appendChild(d);
-  });
-}
-
-function removeItem(idx) {
-  _queue.splice(idx, 1);
-  renderQueue();
-}
-
-function updateStats() {
-  txt('stTotal', _queue.length);
-  txt('stDone',  _queue.filter(q => q.status === 'ok' || q.status === 'err').length);
-  txt('stOk',    _queue.filter(q => q.status === 'ok').length);
-  txt('stErr',   _queue.filter(q => q.status === 'err').length);
-}
-
-// ── Fetch + Save ──────────────────────────────────────────────
 async function runFetch() {
-  if (_running) { toast('Уже запущен'); return; }
-  if (!_queue.length) { toast('Очередь пуста'); return; }
+  if (!_fetchQueue.length) { toast('Очередь пуста'); return; }
+  appendFLog('⟳ Запуск × ' + _fetchQueue.length + ' URL [mode=' + _fetchMode + ']');
+  let okCount = 0;
 
-  _running  = true;
-  _stopFlag = false;
-  el('fetchBtn').disabled = true;
-  el('progBar').classList.add('running');
-  appendLog('⟳ START FETCH × ' + _queue.length + ' [mode=' + _mode + ' lic=' + _lic + ']', 'li');
-
-  let ok = 0, err = 0;
-
-  for (let i = 0; i < _queue.length; i++) {
-    if (_stopFlag) { appendLog('■ STOPPED by user', 'lw'); break; }
-
-    const item = _queue[i];
-    if (item.status === 'ok') { ok++; continue; }
-
-    item.status = 'loading';
-    renderQueueItem(i);
-
+  for (const url of _fetchQueue) {
+    let saved = false;
     const t0 = Date.now();
 
-    // ── Primary: ARGOS backend (downloads & saves to disk) ──────
-    let saved = false;
+    // Primary: ARGOS backend — скачивает и сохраняет на диск
     try {
       const r = await fetch('/api/fetch', {
-        method:  'POST',
+        method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body:    JSON.stringify({url: item.url, mode: _mode, lic: _lic, save: true}),
-        signal:  AbortSignal.timeout(20000),
+        body: JSON.stringify({url, mode: _fetchMode, save: true}),
+        signal: AbortSignal.timeout(20000),
       });
       if (r.ok) {
         const d = await r.json();
-        const ms = Date.now() - t0;
-        item.status   = 'ok';
-        item.saved    = d.saved    || '';
-        item.localUrl = d.local_url|| '';
-        item.size     = d.size     || 0;
-        ok++;
-        const sizeStr = d.size ? fmtBytes(d.size) : '?';
-        appendLog(
-          `💾 [${ms}ms] ${item.type} ${sizeStr}  →  ${d.saved || '(no file)'}` +
-          `\n   ${item.url.substring(0,70)}`,
-          'ls'
-        );
-        saved = true;
+        if (d.ok) {
+          appendFLog('💾 [' + (Date.now()-t0) + 'ms] ' + _detectType(url) + ' ' + fmtBytes(d.size) + ' → ' + d.saved);
+          saved = true; okCount++;
+        } else {
+          appendFLog('⚠ backend: ' + (d.error || 'err'));
+        }
       }
-    } catch {}
-
-    // ── Fallback: browser no-cors (can't save body, just confirms reachable) ─
-    if (!saved) {
-      try {
-        await fetch(item.url, {
-          mode: 'no-cors', cache: 'no-store',
-          signal: AbortSignal.timeout(6000),
-        });
-        const ms = Date.now() - t0;
-        item.status = 'ok'; ok++;
-        appendLog(`✓ [${ms}ms] ${item.type} reachable (backend offline — не сохранено)\n   ${item.url.substring(0,70)}`, 'lw');
-      } catch(e) {
-        item.status = 'err'; err++;
-        appendLog(`✗ ${item.url.substring(0,60)}\n   ${e.message}`, 'le');
-      }
+    } catch(e) {
+      appendFLog('⚠ backend недоступен: ' + e.message.slice(0,50));
     }
 
-    renderQueueItem(i);
-    updateStats();
-    await new Promise(r => setTimeout(r, 20));
+    // Fallback: browser no-cors (только проверка доступности)
+    if (!saved) {
+      try {
+        await fetch(url, {mode:'no-cors', signal:AbortSignal.timeout(8000), cache:'no-store'});
+        appendFLog('✓ [' + (Date.now()-t0) + 'ms] ' + _detectType(url) + ' ' + url.substring(0,55));
+        okCount++;
+      } catch(e) {
+        appendFLog('✗ ' + url.substring(0,50) + ' → ' + e.message);
+      }
+    }
   }
 
-  el('progBar').classList.remove('running');
-  el('progFill').style.width = '100%';
-  setTimeout(() => { el('progFill').style.width = '0%'; }, 800);
-  el('fetchBtn').disabled = false;
-  _running = false;
-  appendLog(`\n✓ DONE  ok=${ok}  err=${err}  total=${_queue.length}`, ok > 0 ? 'ls' : 'lw');
-  toast(`Fetch done: ${ok} OK / ${err} err`);
-  updateStats();
-  loadFiles();   // refresh saved files panel
-}
-
-function stopFetch() {
-  _stopFlag = true;
-  toast('Останавливаем…');
+  appendFLog('✓ DONE (' + okCount + '/' + _fetchQueue.length + ' OK)');
+  toast('Fetch завершён (' + okCount + '/' + _fetchQueue.length + ')');
+  loadFiles();
 }
 
 function fmtBytes(b) {
   if (!b) return '0 B';
-  if (b > 1e6) return (b/1e6).toFixed(1) + ' MB';
-  if (b > 1e3) return (b/1e3).toFixed(0) + ' KB';
-  return b + ' B';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
 }
 
-// ── Saved files panel ─────────────────────────────────────────
 async function loadFiles() {
   try {
     const r = await fetch('/api/fetch/files', {cache:'no-store', signal:AbortSignal.timeout(4000)});
     if (!r.ok) return;
     const d = await r.json();
     renderFiles(d.files || []);
-  } catch {}
+  } catch(e) { /* backend offline — тихо */ }
 }
 
 function renderFiles(files) {
-  const list  = el('fFilesList');
-  const empty = el('fFilesEmpty');
-  txt('fFilesCount', files.length);
-
+  const fc = el('fFilesCount'); if (fc) txt('fFilesCount', files.length);
+  const list = el('fFilesList'); if (!list) return;
+  const emp = el('fFilesEmpty'); if (emp) emp.style.display = files.length ? 'none' : 'block';
   list.querySelectorAll('.fi').forEach(f => f.remove());
-  if (!files.length) { empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
-
   files.slice().reverse().forEach(f => {
     const d = document.createElement('div');
     d.className = 'fi';
+    const safeName = f.name.replace(/'/g, "\\'");
     d.innerHTML =
-      `<span class="fi-name" title="${f.name}">${f.name}</span>` +
-      `<span class="fi-size">${fmtBytes(f.size)}</span>` +
-      `<a class="fi-open" href="${f.url}" target="_blank" title="Открыть">↗</a>` +
-      `<span class="fi-del" onclick="deleteFile('${f.name}')" title="Удалить">×</span>`;
+      '<span class="fi-name" title="' + f.name + '">' + f.name + '</span>' +
+      '<span class="fi-size">' + fmtBytes(f.size) + '</span>' +
+      '<a class="fi-open" href="http://localhost:18789' + f.url + '" target="_blank" title="Открыть">↗</a>' +
+      '<span class="fi-del" onclick="deleteFetchFile(\'' + safeName + '\')" title="Удалить">×</span>';
     list.appendChild(d);
   });
 }
 
-async function deleteFile(name) {
+async function deleteFetchFile(name) {
   try {
     const r = await fetch('/api/fetch/delete', {
-      method:  'POST',
-      headers: {'Content-Type':'application/json'},
-      body:    JSON.stringify({name}),
-      signal:  AbortSignal.timeout(4000),
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name}),
+      signal: AbortSignal.timeout(5000),
     });
     const d = await r.json();
-    if (d.ok) { toast('Удалён: ' + name); loadFiles(); appendLog('🗑 ' + name, 'lw'); }
-    else        toast('Ошибка: ' + (d.error||'?'));
-  } catch(e) { toast('✗ ' + e.message); }
+    if (d.ok) { toast('Удалён: ' + name); loadFiles(); appendFLog('🗑 ' + name); }
+    else toast('Ошибка: ' + d.error);
+  } catch(e) { toast('Ошибка удаления'); }
 }
 
-function openFetchDir() {
-  // Try to open the fetched/ folder in browser
-  window.open('/fetched/', '_blank');
-}
+// ── Auto-refresh every 10s (active tab only) ──────────────────
+setInterval(() => {
+  if (_curTab === 'brain')   refreshBrain();
+  if (_curTab === 'metrics') fetchMetrics();
+  if (_curTab === 'p2p')     refreshP2P();
+  if (_curTab === 'vms')     refreshVMs();
+}, 10000);
 
-function renderQueueItem(idx) {
-  const row = el('qList').querySelector(`.qi[data-idx="${idx}"]`);
-  if (!row) return;
-  const s = el('qList').querySelectorAll('.qi')[idx];
-  if (s) {
-    const sd = s.querySelector('.qi-status');
-    if (sd) sd.className = 'qi-status ' + (_queue[idx]?.status||'idle');
-  }
-}
-
-// ── Clock ─────────────────────────────────────────────────────
-(function tick() {
-  txt('hClock', new Date().toLocaleTimeString('ru-RU',{hour12:false}));
-  setTimeout(tick, 1000);
-})();
-
-// ── Service health ────────────────────────────────────────────
-async function checkServices() {
-  // Brain API
-  try {
-    await fetch('http://localhost:5010/health', {cache:'no-store', signal:AbortSignal.timeout(2000)});
-    el('brainPill').className = 'pill g';
-    txt('brainTxt', 'Brain ON');
-  } catch {
-    el('brainPill').className = 'pill r';
-    txt('brainTxt', 'Brain OFF');
-  }
-
-  // Web server /api/fetch endpoint
-  try {
-    const r = await fetch('/api/fetch/ping', {cache:'no-store', signal:AbortSignal.timeout(2000)});
-    if (r.ok) {
-      el('srvPill').className = 'pill g';
-      txt('srvTxt', ':18789 ON');
-    }
-  } catch {}
-}
-
-checkServices();
-setInterval(checkServices, 15000);
-appendLog('ARGOS Content Fetcher ready · mode=offline · lic=ALL', 'ls');
+// ── Boot ──────────────────────────────────────────────────────
+refreshBrain();
+renderApis();
 </script>
 </body>
 </html>

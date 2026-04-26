@@ -42,7 +42,7 @@ METRICS_TTL: float   = 2.0  # seconds
 
 @app.route("/")
 def index():
-    return send_from_directory(BASE_DIR, "argos_dashboard.html")
+    return send_from_directory(BASE_DIR, "dashboard_master.html")
 
 
 @app.route("/<path:filename>")
