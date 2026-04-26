@@ -4,7 +4,9 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>ARGOS · Master Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+</style>
 <style>
 /* ═══════════════ BASE ═══════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -454,6 +456,10 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
       <span class="nav-icon">⚡</span>
       <span>ACTIONS</span>
     </button>
+    <button class="nav-item" data-tab="fetch">
+      <span class="nav-icon">📥</span>
+      <span>FETCH</span>
+    </button>
   </nav>
 
   <div class="sb-foot">
@@ -845,6 +851,121 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
   </div>
   </div>
 
+  <!-- ══ FETCH ══ -->
+  <div class="panel" id="panel-fetch">
+  <div class="pscroll">
+    <div class="sec"><span class="sec-icon">⚙</span>CONTENT FETCHER</div>
+
+    <!-- Mode row -->
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px">
+      <div class="card" id="fmCard-offline" style="cursor:pointer;border-color:rgba(0,255,136,.3)" onclick="setFetchMode('offline')">
+        <div style="font-size:20px;margin-bottom:6px">📴</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--green)">OFFLINE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">из локальных источников</div>
+      </div>
+      <div class="card" id="fmCard-free" style="cursor:pointer" onclick="setFetchMode('free')">
+        <div style="font-size:20px;margin-bottom:6px">🆓</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--muted)">FREE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">без API-ключей</div>
+      </div>
+      <div class="card" id="fmCard-safe" style="cursor:pointer" onclick="setFetchMode('safe')">
+        <div style="font-size:20px;margin-bottom:6px">🛡</div>
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--muted)">SAFE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px">CC0 / CC / MIT / Apache</div>
+      </div>
+      <div class="card card-blue" style="padding:14px 16px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.1em">Лицензия</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px" id="fLicFilters">
+          <button class="fb act" data-lic="all" onclick="setLic(this,'all')">ALL</button>
+          <button class="fb" data-lic="cc0" onclick="setLic(this,'cc0')">CC0</button>
+          <button class="fb" data-lic="cc" onclick="setLic(this,'cc')">CC BY</button>
+          <button class="fb" data-lic="mit" onclick="setLic(this,'mit')">MIT</button>
+          <button class="fb" data-lic="apache" onclick="setLic(this,'apache')">Apache</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- URL Queue -->
+    <div class="sec"><span class="sec-icon">🔗</span>URL QUEUE</div>
+    <div class="card" style="margin-bottom:20px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input class="inp" id="fUrlInput" style="flex:1" placeholder="https://example.com/resource.jpg" onkeydown="if(event.key==='Enter')addFetchUrl()"/>
+        <button class="btn btn-g btn-sm" onclick="addFetchUrl()">+ Add</button>
+        <button class="btn btn-r btn-sm" onclick="removeFetchUrl()">– Del</button>
+        <button class="btn btn-b btn-sm" onclick="runFetch()">⟳ Fetch</button>
+      </div>
+      <div id="fQueue" style="display:flex;flex-direction:column;gap:6px;min-height:40px">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);padding:10px 0;text-align:center" id="fQueueEmpty">— очередь пуста —</div>
+      </div>
+    </div>
+
+    <!-- Source Library -->
+    <div class="sec"><span class="sec-icon">📚</span>SOURCE LIBRARY</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:20px">
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('images')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🖼</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">IMAGES</span>
+          <span class="badge bx" style="margin-left:auto;font-size:9px">CC0</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          OpenVerse · Wikimedia Commons<br>Unsplash · Pexels · Picsum<br>LoremFlickr
+        </div>
+      </div>
+
+      <div class="card card-blue" style="cursor:pointer" onclick="addSourceUrls('audio')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🎵</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">AUDIO</span>
+          <span class="badge bg" style="margin-left:auto;font-size:9px">FREE</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          Free Music Archive<br>Jamendo · CC0 fallback
+        </div>
+      </div>
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('docs')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">📄</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">DOCS / CODE</span>
+          <span class="badge bb" style="margin-left:auto;font-size:9px">MIT</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          GitHub Raw · Project Gutenberg<br>samplefiles.org
+        </div>
+      </div>
+
+      <div class="card card-blue" style="cursor:pointer" onclick="addSourceUrls('apis')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">🔌</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">OPEN APIS</span>
+          <span class="badge bg" style="margin-left:auto;font-size:9px">NO KEY</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          World Bank · UN Data · OECD<br>US Census · OpenWeather<br>OpenCage · OpenDataSoft
+        </div>
+      </div>
+
+      <div class="card" style="cursor:pointer" onclick="addSourceUrls('services')">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:18px">⚡</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text)">SERVICES</span>
+          <span class="badge bo" style="margin-left:auto;font-size:9px">KEY</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7">
+          Clearbit · Bitly · PDF.co<br>Apify · Twilio · IPStack<br>AbstractAPI · SendGrid
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Result -->
+    <div class="sec"><span class="sec-icon">📊</span>FETCH RESULT</div>
+    <div class="logbox" id="fLog" style="height:200px">— нет результатов —</div>
+  </div>
+  </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /layout -->
@@ -922,6 +1043,7 @@ const TAB_TITLES = {
   metrics: ['📊 METRICS',  'psutil · Docker · GPU'],
   logs:    ['📝 LOGS',     'Brain API · Live Stream'],
   actions: ['⚡ ACTIONS',  'Quick System Controls'],
+  fetch:   ['📥 FETCH',   'Content Fetcher · CC0 / Free / Safe'],
 };
 
 function switchTab(id) {
@@ -943,6 +1065,7 @@ function _initTab(id) {
   if (id === 'p2p')     refreshP2P();
   if (id === 'vms')     refreshVMs();
   if (id === 'apis')    renderApis();
+  if (id === 'fetch')   initFetch();
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -990,6 +1113,9 @@ setInterval(() => {
 
 // ── TAB: BRAIN ────────────────────────────────────────────────
 async function refreshBrain() {
+  // Reset to loading state
+  txt('bTotal', '…'); txt('bOnline', '…'); txt('bOffline', '…');
+
   // Nodes
   fetch('http://localhost:5010/brain/nodes', {
     cache: 'no-store', signal: AbortSignal.timeout(4000)
@@ -1018,6 +1144,9 @@ async function refreshBrain() {
     el('brainPill').className = 'pill g';
     txt('brainPillTxt', 'BRAIN ON');
   }).catch(e => {
+    const bT = el('bTotal'); if(bT){bT.textContent='✗';bT.style.color='var(--red2)'}
+    const bO = el('bOnline'); if(bO){bO.textContent='0';bO.style.color='var(--muted)'}
+    const bF = el('bOffline'); if(bF){bF.textContent='0';bF.style.color='var(--muted)'}
     el('bRows').innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red2);padding:30px">${e.message}</td></tr>`;
     dot('bApiDot', 'r'); txt('bApiStatus', 'offline · ' + e.message);
     dot('sbBrainDot', 'r'); txt('sbBrainTxt', 'OFF');
@@ -1056,7 +1185,6 @@ async function refreshBrain() {
     .then(r => { dot('shCompute', r.ok ? 'g' : 'o'); txt('shComputeV', r.ok ? '✓ online' : '⚠ ' + r.status); })
     .catch(() => { dot('shCompute', 'r'); txt('shComputeV', '✗ offline'); });
 
-  txt('bTotal', '…');
 }
 
 // ── TAB: FREE APIs ────────────────────────────────────────────
@@ -1392,6 +1520,133 @@ async function runSkill() {
     rEl.textContent = JSON.stringify(d).substring(0, 120);
     toast('Skill ' + skill + ' запущен');
   } catch (e) { rEl.textContent = '✗ ' + e.message; }
+}
+
+// ── TAB: FETCH ────────────────────────────────────────────────
+const FETCH_SOURCES = {
+  images:   ['https://picsum.photos/400/300','https://source.unsplash.com/random/400x300','https://commons.wikimedia.org/wiki/Special:Random/File'],
+  audio:    ['https://freemusicarchive.org/api/get/tracks.json?limit=5','https://api.jamendo.com/v3.0/tracks/?format=json&limit=5&client_id=b6747d04'],
+  docs:     ['https://raw.githubusercontent.com/torvalds/linux/master/README','https://www.gutenberg.org/files/2701/2701-h/2701-h.htm'],
+  apis:     ['https://api.worldbank.org/v2/country?format=json&per_page=5','https://restcountries.com/v3.1/all?fields=name,capital,population'],
+  services: ['https://ipapi.co/json/','https://worldtimeapi.org/api/timezone/Europe/Moscow'],
+};
+
+let _fetchMode = 'offline';
+let _fetchLic  = 'all';
+let _fetchQueue = [];
+
+function initFetch() {
+  setFetchMode('offline');
+}
+
+function setFetchMode(mode) {
+  _fetchMode = mode;
+  ['offline','free','safe'].forEach(m => {
+    const c = el('fmCard-'+m);
+    if (!c) return;
+    if (m === mode) {
+      c.style.borderColor = 'rgba(0,255,136,.35)';
+      c.querySelector('.kpi-lbl, div[style*="font-weight:700"]') &&
+        (c.querySelector('div[style*="font-weight:700"]').style.color = 'var(--green)');
+    } else {
+      c.style.borderColor = 'rgba(0,255,136,.1)';
+    }
+  });
+  appendFLog('ℹ MODE → ' + mode.toUpperCase());
+}
+
+function setLic(btn, lic) {
+  _fetchLic = lic;
+  el('fLicFilters').querySelectorAll('.fb').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+  appendFLog('ℹ LICENCE → ' + lic.toUpperCase());
+}
+
+function addFetchUrl() {
+  const inp = el('fUrlInput');
+  const url = inp.value.trim();
+  if (!url) { toast('Введи URL'); return; }
+  _fetchQueue.push(url);
+  inp.value = '';
+  renderFQueue();
+  appendFLog('+ ' + url);
+}
+
+function removeFetchUrl() {
+  if (!_fetchQueue.length) { toast('Очередь пуста'); return; }
+  const removed = _fetchQueue.pop();
+  renderFQueue();
+  appendFLog('– ' + removed);
+}
+
+function addSourceUrls(type) {
+  const urls = FETCH_SOURCES[type] || [];
+  urls.forEach(u => _fetchQueue.push(u));
+  renderFQueue();
+  appendFLog('+ SOURCE «' + type.toUpperCase() + '» → ' + urls.length + ' URL');
+  toast('Добавлено ' + urls.length + ' источников: ' + type);
+}
+
+function renderFQueue() {
+  const q = el('fQueue');
+  const empty = el('fQueueEmpty');
+  if (!_fetchQueue.length) {
+    if (empty) empty.style.display = 'block';
+    const items = q.querySelectorAll('.fq-item');
+    items.forEach(i => i.remove());
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  // Remove old items, re-render
+  q.querySelectorAll('.fq-item').forEach(i => i.remove());
+  _fetchQueue.forEach((url, idx) => {
+    const d = document.createElement('div');
+    d.className = 'fq-item';
+    d.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(0,0,0,.3);border-radius:5px;border:1px solid rgba(75,96,128,.15)';
+    d.innerHTML = `<span style="font-family:var(--mono);font-size:9px;color:var(--muted);min-width:18px">${idx+1}</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${url}</span>
+      <span style="font-family:var(--mono);font-size:9px;padding:1px 6px;background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.15);border-radius:3px;color:var(--cyan2)">${_detectType(url)}</span>`;
+    q.appendChild(d);
+  });
+}
+
+function _detectType(url) {
+  if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url) || /picsum|unsplash|wikimedia|pexels/i.test(url)) return 'IMG';
+  if (/\.(mp3|wav|ogg|flac)$/i.test(url) || /jamendo|freemusicarchive/i.test(url)) return 'AUDIO';
+  if (/\.(pdf)$/i.test(url) || /gutenberg|pdf\.co/i.test(url)) return 'PDF';
+  if (/\.(js|py|ts|sh|json|yaml)$/i.test(url) || /github\.com|raw\.githubusercontent/i.test(url)) return 'CODE';
+  if (/api\.|\/api\/|\.json|format=json/i.test(url)) return 'JSON';
+  return 'FILE';
+}
+
+function appendFLog(msg) {
+  const box = el('fLog');
+  if (!box) return;
+  const ts = new Date().toLocaleTimeString('ru-RU');
+  const isErr = /error|fail|✗/i.test(msg);
+  const isOk  = /ok|success|\+\s/i.test(msg);
+  const cls   = isErr ? 'le' : isOk ? 'ls' : 'li';
+  if (box.textContent === '— нет результатов —') box.innerHTML = '';
+  box.innerHTML += `<span class="lt">[${ts}]</span> <span class="${cls}">${msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>\n`;
+  box.scrollTop = box.scrollHeight;
+}
+
+async function runFetch() {
+  if (!_fetchQueue.length) { toast('Очередь пуста'); return; }
+  appendFLog('⟳ Запуск fetch × ' + _fetchQueue.length + ' URL [mode=' + _fetchMode + ' lic=' + _fetchLic + ']');
+
+  for (const url of _fetchQueue) {
+    try {
+      const t0 = Date.now();
+      const r = await fetch(url, {mode:'no-cors', signal: AbortSignal.timeout(6000), cache:'no-store'});
+      const ms = Date.now()-t0;
+      appendFLog('✓ ' + _detectType(url) + ' [' + ms + 'ms] ' + url.substring(0,60));
+    } catch(e) {
+      appendFLog('✗ ' + url.substring(0,50) + ' → ' + e.message);
+    }
+  }
+  appendFLog('✓ DONE');
+  toast('Fetch завершён (' + _fetchQueue.length + ' URLs)');
 }
 
 // ── Auto-refresh every 10s (active tab only) ──────────────────
