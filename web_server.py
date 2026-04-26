@@ -200,52 +200,146 @@ def metrics():
 
 # ── Content Fetcher ───────────────────────────────────────────────────────────
 
+import hashlib
+import mimetypes
+import re
+import urllib.parse
+
+# Directory where fetched files are stored
+FETCH_DIR = os.path.join(BASE_DIR, "fetched")
+
+
+def _ensure_fetch_dir() -> str:
+    os.makedirs(FETCH_DIR, exist_ok=True)
+    return FETCH_DIR
+
+
+def _safe_filename(url: str, content_type: str = "") -> str:
+    """Derive a safe filename from URL + content-type."""
+    parsed = urllib.parse.urlparse(url)
+    name   = os.path.basename(parsed.path.rstrip("/")) or "file"
+    # Strip query params from name
+    name   = re.sub(r"[?&#].*$", "", name)
+    # Sanitise
+    name   = re.sub(r"[^\w.\-]", "_", name)[:120] or "file"
+    # Add extension from content-type if missing
+    if "." not in name and content_type:
+        ext = mimetypes.guess_extension(content_type.split(";")[0].strip()) or ""
+        if ext and not name.endswith(ext):
+            name += ext
+    # Add short hash to avoid collisions
+    h = hashlib.md5(url.encode()).hexdigest()[:6]
+    base, dot, ext = name.rpartition(".")
+    return f"{base}_{h}.{ext}" if dot else f"{name}_{h}"
+
+
+def _is_lan(host: str) -> bool:
+    return (
+        host in ("localhost", "127.0.0.1", "::1")
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+        or host.startswith("172.")
+    )
+
+
 @app.route("/api/fetch/ping")
 def fetch_ping():
-    return jsonify({"ok": True, "service": "argos-fetch", "port": PORT})
+    return jsonify({"ok": True, "service": "argos-fetch", "port": PORT,
+                    "fetch_dir": FETCH_DIR})
+
+
+@app.route("/api/fetch/files")
+def fetch_files():
+    """List files already saved in fetched/."""
+    _ensure_fetch_dir()
+    files = []
+    for fname in sorted(os.listdir(FETCH_DIR)):
+        fpath = os.path.join(FETCH_DIR, fname)
+        if os.path.isfile(fpath):
+            files.append({
+                "name":  fname,
+                "size":  os.path.getsize(fpath),
+                "mtime": os.path.getmtime(fpath),
+                "url":   f"/fetched/{fname}",
+            })
+    return jsonify({"files": files, "dir": FETCH_DIR})
+
+
+@app.route("/fetched/<path:filename>")
+def serve_fetched(filename: str):
+    """Serve a saved file directly."""
+    safe = os.path.normpath(filename)
+    if safe.startswith(".."):
+        return "Forbidden", 403
+    return send_from_directory(FETCH_DIR, safe)
+
+
+@app.route("/api/fetch/delete", methods=["POST"])
+def fetch_delete():
+    """Delete a saved file."""
+    name = (request.get_json(silent=True) or {}).get("name", "")
+    if not name or ".." in name or "/" in name or "\\" in name:
+        return jsonify({"error": "invalid name"}), 400
+    fpath = os.path.join(FETCH_DIR, name)
+    if os.path.isfile(fpath):
+        os.remove(fpath)
+        return jsonify({"ok": True, "deleted": name})
+    return jsonify({"error": "file not found"}), 404
 
 
 @app.route("/api/fetch", methods=["POST"])
 def fetch_url():
-    """Server-side URL fetch — bypasses CORS, returns size + content type."""
+    """Download URL server-side, save to fetched/, return metadata."""
     if not _REQUESTS:
         return jsonify({"error": "requests not installed"}), 500
 
-    data    = request.get_json(silent=True) or {}
-    url     = data.get("url", "").strip()
-    mode    = data.get("mode", "free")
-    # lic   = data.get("lic", "all")   # reserved for future filtering
+    data = request.get_json(silent=True) or {}
+    url  = data.get("url", "").strip()
+    mode = data.get("mode", "free")
+    save = data.get("save", True)   # default: always save
 
     if not url:
         return jsonify({"error": "url required"}), 400
     if not url.startswith(("http://", "https://")):
-        return jsonify({"error": "invalid url"}), 400
+        return jsonify({"error": "invalid url scheme"}), 400
 
-    # Offline mode: only allow localhost / LAN
-    if mode == "offline":
-        import urllib.parse
-        host = urllib.parse.urlparse(url).hostname or ""
-        if not (host in ("localhost", "127.0.0.1", "::1")
-                or host.startswith("192.168.")
-                or host.startswith("10.")
-                or host.startswith("172.")):
-            return jsonify({"error": "offline mode: only localhost/LAN allowed", "host": host}), 403
+    host = urllib.parse.urlparse(url).hostname or ""
+    if mode == "offline" and not _is_lan(host):
+        return jsonify({"error": "offline mode: only localhost/LAN", "host": host}), 403
 
     try:
-        headers = {"User-Agent": "ARGOS-Fetch/2.1 (compatible; +https://argos.local)"}
-        r = requests.get(url, headers=headers, timeout=15, stream=True, allow_redirects=True)
-        content_type = r.headers.get("Content-Type", "application/octet-stream")
-        # Read up to 512 KB
-        chunk = r.raw.read(524288)
-        size  = len(chunk)
-        r.close()
+        hdrs = {"User-Agent": "ARGOS-Fetch/2.1"}
+        r    = requests.get(url, headers=hdrs, timeout=15,
+                            stream=True, allow_redirects=True)
+        r.raise_for_status()
 
-        # Try to detect text vs binary
-        is_text = any(t in content_type for t in ("text", "json", "xml", "javascript", "yaml"))
+        content_type = r.headers.get("Content-Type", "application/octet-stream")
+        # Read up to 8 MB
+        data_bytes = b""
+        for chunk in r.iter_content(8 * 1024 * 1024):
+            data_bytes += chunk
+            if len(data_bytes) >= 8 * 1024 * 1024:
+                break
+        r.close()
+        size = len(data_bytes)
+
+        # Save to disk
+        saved_path = ""
+        saved_name = ""
+        if save and data_bytes:
+            _ensure_fetch_dir()
+            saved_name = _safe_filename(url, content_type)
+            saved_path = os.path.join(FETCH_DIR, saved_name)
+            with open(saved_path, "wb") as f:
+                f.write(data_bytes)
+
+        # Text preview
+        is_text = any(t in content_type for t in
+                      ("text", "json", "xml", "javascript", "yaml", "csv"))
         preview = ""
-        if is_text and chunk:
+        if is_text:
             try:
-                preview = chunk.decode("utf-8", errors="replace")[:400]
+                preview = data_bytes.decode("utf-8", errors="replace")[:500]
             except Exception:
                 pass
 
@@ -255,13 +349,18 @@ def fetch_url():
             "status":       r.status_code,
             "content_type": content_type,
             "size":         size,
+            "saved":        saved_name,
+            "local_url":    f"/fetched/{saved_name}" if saved_name else "",
             "preview":      preview,
             "mode":         mode,
         })
+
     except requests.exceptions.Timeout:
         return jsonify({"error": "timeout", "url": url}), 504
+    except requests.exceptions.HTTPError as exc:
+        return jsonify({"error": f"HTTP {exc.response.status_code}", "url": url}), 502
     except requests.exceptions.ConnectionError as exc:
-        return jsonify({"error": "connection error", "detail": str(exc), "url": url}), 503
+        return jsonify({"error": "connection error", "detail": str(exc)[:120], "url": url}), 503
     except Exception as exc:
         return jsonify({"error": str(exc), "url": url}), 500
 

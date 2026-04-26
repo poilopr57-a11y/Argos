@@ -189,17 +189,38 @@ body>*{position:relative;z-index:1}
 
 /* LOG */
 .log-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
-  display:flex;flex-direction:column;overflow:hidden;flex:1}
+  display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0}
 .log-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
   border-bottom:1px solid rgba(0,255,136,.07);flex-shrink:0;
   background:linear-gradient(90deg,rgba(0,255,136,.04),transparent)}
 .log-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--green)}
 .logbox{flex:1;overflow-y:auto;padding:10px 12px;
   font-family:var(--mono);font-size:10px;line-height:1.8;color:var(--muted);
-  white-space:pre-wrap;word-break:break-all}
+  white-space:pre-wrap;word-break:break-all;min-height:80px}
 .logbox .le{color:#ff5c5c}.logbox .lw{color:var(--orange2)}
 .logbox .ls{color:var(--green)}.logbox .li{color:var(--cyan2)}
 .logbox .lt{color:var(--dim)}
+
+/* SAVED FILES */
+.files-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
+  display:flex;flex-direction:column;overflow:hidden;margin-top:10px;flex-shrink:0}
+.files-hdr{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  border-bottom:1px solid rgba(0,255,136,.07);flex-shrink:0;
+  background:linear-gradient(90deg,rgba(59,130,246,.04),transparent)}
+.files-hdr-title{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--blue2)}
+.files-list{max-height:200px;overflow-y:auto;padding:6px}
+.fi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;
+  border:1px solid rgba(75,96,128,.12);margin-bottom:4px;background:rgba(0,0,0,.25);
+  transition:all .15s}
+.fi:last-child{margin-bottom:0}
+.fi:hover{border-color:rgba(59,130,246,.2);background:rgba(59,130,246,.04)}
+.fi-name{font-family:var(--mono);font-size:10px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fi-size{font-family:var(--mono);font-size:9px;color:var(--muted);flex-shrink:0}
+.fi-open{font-size:12px;cursor:pointer;color:var(--muted);flex-shrink:0;text-decoration:none}
+.fi-open:hover{color:var(--cyan2)}
+.fi-del{font-size:13px;cursor:pointer;color:var(--dim);flex-shrink:0}
+.fi-del:hover{color:var(--red2)}
+.files-empty{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:16px}
 
 /* ═══════════ PROGRESS BAR (fetch running) ═══════════ */
 .progress-bar{
@@ -421,6 +442,21 @@ body>*{position:relative;z-index:1}
         <div class="logbox" id="fLog">— ожидание —</div>
       </div>
 
+      <!-- Saved files -->
+      <div class="files-wrap">
+        <div class="files-hdr">
+          <span class="files-hdr-title">💾 Saved Files</span>
+          <span class="badge bb" id="fFilesCount" style="font-size:9px">0</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn btn-x btn-sm" onclick="loadFiles()">⟳</button>
+            <button class="btn btn-x btn-sm" onclick="openFetchDir()">📂 Folder</button>
+          </div>
+        </div>
+        <div class="files-list" id="fFilesList">
+          <div class="files-empty" id="fFilesEmpty">— пока нет сохранённых файлов —</div>
+        </div>
+      </div>
+
     </div><!-- /right-panel -->
   </div><!-- /main-grid -->
 
@@ -640,13 +676,13 @@ function updateStats() {
   txt('stErr',   _queue.filter(q => q.status === 'err').length);
 }
 
-// ── Fetch ─────────────────────────────────────────────────────
+// ── Fetch + Save ──────────────────────────────────────────────
 async function runFetch() {
   if (_running) { toast('Уже запущен'); return; }
   if (!_queue.length) { toast('Очередь пуста'); return; }
 
-  _running   = true;
-  _stopFlag  = false;
+  _running  = true;
+  _stopFlag = false;
   el('fetchBtn').disabled = true;
   el('progBar').classList.add('running');
   appendLog('⟳ START FETCH × ' + _queue.length + ' [mode=' + _mode + ' lic=' + _lic + ']', 'li');
@@ -663,60 +699,126 @@ async function runFetch() {
     renderQueueItem(i);
 
     const t0 = Date.now();
-    try {
-      // Try via ARGOS backend first, fallback to direct
-      let fetched = false;
-      try {
-        const r = await fetch('/api/fetch', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({url: item.url, mode: _mode, lic: _lic}),
-          signal: AbortSignal.timeout(10000),
-        });
-        if (r.ok) {
-          const d = await r.json();
-          const ms = Date.now()-t0;
-          item.status = 'ok'; ok++;
-          appendLog(`✓ [${ms}ms] ${item.type} ${item.url.substring(0,55)} → ${d.size||'?'} bytes`, 'ls');
-          fetched = true;
-        }
-      } catch {}
 
-      if (!fetched) {
-        // Direct browser fetch (no-cors for cross-origin)
+    // ── Primary: ARGOS backend (downloads & saves to disk) ──────
+    let saved = false;
+    try {
+      const r = await fetch('/api/fetch', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify({url: item.url, mode: _mode, lic: _lic, save: true}),
+        signal:  AbortSignal.timeout(20000),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const ms = Date.now() - t0;
+        item.status   = 'ok';
+        item.saved    = d.saved    || '';
+        item.localUrl = d.local_url|| '';
+        item.size     = d.size     || 0;
+        ok++;
+        const sizeStr = d.size ? fmtBytes(d.size) : '?';
+        appendLog(
+          `💾 [${ms}ms] ${item.type} ${sizeStr}  →  ${d.saved || '(no file)'}` +
+          `\n   ${item.url.substring(0,70)}`,
+          'ls'
+        );
+        saved = true;
+      }
+    } catch {}
+
+    // ── Fallback: browser no-cors (can't save body, just confirms reachable) ─
+    if (!saved) {
+      try {
         await fetch(item.url, {
           mode: 'no-cors', cache: 'no-store',
           signal: AbortSignal.timeout(6000),
         });
-        const ms = Date.now()-t0;
+        const ms = Date.now() - t0;
         item.status = 'ok'; ok++;
-        appendLog(`✓ [${ms}ms] ${item.type} ${item.url.substring(0,55)}`, 'ls');
+        appendLog(`✓ [${ms}ms] ${item.type} reachable (backend offline — не сохранено)\n   ${item.url.substring(0,70)}`, 'lw');
+      } catch(e) {
+        item.status = 'err'; err++;
+        appendLog(`✗ ${item.url.substring(0,60)}\n   ${e.message}`, 'le');
       }
-    } catch(e) {
-      item.status = 'err'; err++;
-      appendLog(`✗ ${item.url.substring(0,50)} → ${e.message}`, 'le');
     }
 
     renderQueueItem(i);
     updateStats();
-
-    // Tiny yield so UI stays responsive
-    await new Promise(r => setTimeout(r, 30));
+    await new Promise(r => setTimeout(r, 20));
   }
 
   el('progBar').classList.remove('running');
   el('progFill').style.width = '100%';
   setTimeout(() => { el('progFill').style.width = '0%'; }, 800);
   el('fetchBtn').disabled = false;
-  _running  = false;
-  appendLog(`✓ DONE  ok=${ok}  err=${err}  total=${_queue.length}`, ok>0?'ls':'lw');
+  _running = false;
+  appendLog(`\n✓ DONE  ok=${ok}  err=${err}  total=${_queue.length}`, ok > 0 ? 'ls' : 'lw');
   toast(`Fetch done: ${ok} OK / ${err} err`);
   updateStats();
+  loadFiles();   // refresh saved files panel
 }
 
 function stopFetch() {
   _stopFlag = true;
   toast('Останавливаем…');
+}
+
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  if (b > 1e6) return (b/1e6).toFixed(1) + ' MB';
+  if (b > 1e3) return (b/1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+// ── Saved files panel ─────────────────────────────────────────
+async function loadFiles() {
+  try {
+    const r = await fetch('/api/fetch/files', {cache:'no-store', signal:AbortSignal.timeout(4000)});
+    if (!r.ok) return;
+    const d = await r.json();
+    renderFiles(d.files || []);
+  } catch {}
+}
+
+function renderFiles(files) {
+  const list  = el('fFilesList');
+  const empty = el('fFilesEmpty');
+  txt('fFilesCount', files.length);
+
+  list.querySelectorAll('.fi').forEach(f => f.remove());
+  if (!files.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  files.slice().reverse().forEach(f => {
+    const d = document.createElement('div');
+    d.className = 'fi';
+    d.innerHTML =
+      `<span class="fi-name" title="${f.name}">${f.name}</span>` +
+      `<span class="fi-size">${fmtBytes(f.size)}</span>` +
+      `<a class="fi-open" href="${f.url}" target="_blank" title="Открыть">↗</a>` +
+      `<span class="fi-del" onclick="deleteFile('${f.name}')" title="Удалить">×</span>`;
+    list.appendChild(d);
+  });
+}
+
+async function deleteFile(name) {
+  try {
+    const r = await fetch('/api/fetch/delete', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify({name}),
+      signal:  AbortSignal.timeout(4000),
+    });
+    const d = await r.json();
+    if (d.ok) { toast('Удалён: ' + name); loadFiles(); appendLog('🗑 ' + name, 'lw'); }
+    else        toast('Ошибка: ' + (d.error||'?'));
+  } catch(e) { toast('✗ ' + e.message); }
+}
+
+function openFetchDir() {
+  // Try to open the fetched/ folder in browser
+  window.open('/fetched/', '_blank');
 }
 
 function renderQueueItem(idx) {
