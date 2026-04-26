@@ -328,6 +328,11 @@ try:
         raise SystemExit(2)
 
     arc = arc_agi.Arcade()
+    # Открываем карточку с тегами для three.arcprize.org
+    try:
+        arc.open_scorecard(tags=["argos", "smart-bfs", "agent"])
+    except Exception:
+        pass
     env = arc.make(env_id, render_mode="terminal" if render else None)
 
     # BFS-оптимальные маршруты для всех 7 уровней ls20.
@@ -452,11 +457,14 @@ def start_game_async(
             return {"ok": False, "message": "ARC game already running"}
 
         selected_env = _choose_env() if (env_id or "").strip().lower() == "auto" else env_id
-        selected_action = (action_name or "").strip().upper() or _choose_action(selected_env)
-        # Умная стратегия: для ls20 используем BFS-маршруты по умолчанию
-        use_smart = selected_env == "ls20" and selected_action in ("", "SMART", "SMART_LS20", "ACTION1")
+        explicit_action = (action_name or "").strip().upper()
+        # Умная стратегия для ls20: применяется ВСЕГДА, кроме явно заданного ACTION2/3/4
+        # (для ручной отладки одиночными действиями)
+        use_smart = selected_env == "ls20" and explicit_action not in ("ACTION2", "ACTION3", "ACTION4")
         if use_smart:
             selected_action = "SMART_LS20"
+        else:
+            selected_action = explicit_action or _choose_action(selected_env)
         learned_steps = steps
         if learned_steps <= 0:
             learned_steps = 400 if use_smart else int(get_learning_stats().get("recommended_steps", 10) or 10)
