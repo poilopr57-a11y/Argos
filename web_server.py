@@ -198,6 +198,74 @@ def metrics():
     return jsonify(_collect_metrics())
 
 
+# ── Content Fetcher ───────────────────────────────────────────────────────────
+
+@app.route("/api/fetch/ping")
+def fetch_ping():
+    return jsonify({"ok": True, "service": "argos-fetch", "port": PORT})
+
+
+@app.route("/api/fetch", methods=["POST"])
+def fetch_url():
+    """Server-side URL fetch — bypasses CORS, returns size + content type."""
+    if not _REQUESTS:
+        return jsonify({"error": "requests not installed"}), 500
+
+    data    = request.get_json(silent=True) or {}
+    url     = data.get("url", "").strip()
+    mode    = data.get("mode", "free")
+    # lic   = data.get("lic", "all")   # reserved for future filtering
+
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    if not url.startswith(("http://", "https://")):
+        return jsonify({"error": "invalid url"}), 400
+
+    # Offline mode: only allow localhost / LAN
+    if mode == "offline":
+        import urllib.parse
+        host = urllib.parse.urlparse(url).hostname or ""
+        if not (host in ("localhost", "127.0.0.1", "::1")
+                or host.startswith("192.168.")
+                or host.startswith("10.")
+                or host.startswith("172.")):
+            return jsonify({"error": "offline mode: only localhost/LAN allowed", "host": host}), 403
+
+    try:
+        headers = {"User-Agent": "ARGOS-Fetch/2.1 (compatible; +https://argos.local)"}
+        r = requests.get(url, headers=headers, timeout=15, stream=True, allow_redirects=True)
+        content_type = r.headers.get("Content-Type", "application/octet-stream")
+        # Read up to 512 KB
+        chunk = r.raw.read(524288)
+        size  = len(chunk)
+        r.close()
+
+        # Try to detect text vs binary
+        is_text = any(t in content_type for t in ("text", "json", "xml", "javascript", "yaml"))
+        preview = ""
+        if is_text and chunk:
+            try:
+                preview = chunk.decode("utf-8", errors="replace")[:400]
+            except Exception:
+                pass
+
+        return jsonify({
+            "ok":           True,
+            "url":          url,
+            "status":       r.status_code,
+            "content_type": content_type,
+            "size":         size,
+            "preview":      preview,
+            "mode":         mode,
+        })
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "timeout", "url": url}), 504
+    except requests.exceptions.ConnectionError as exc:
+        return jsonify({"error": "connection error", "detail": str(exc), "url": url}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc), "url": url}), 500
+
+
 # ── Ollama direct proxy ───────────────────────────────────────────────────────
 
 @app.route("/api/ollama/tags")
