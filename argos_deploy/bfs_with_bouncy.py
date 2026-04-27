@@ -129,6 +129,14 @@ def extract_level(lvl):
             shape_ch.add(pos)
         elif 'npxgalaybz' in tags:
             bouncy.add(pos)
+        elif 'gbvqrjtaqo' in tags:
+            # Gates (twkzhcfelv) — pushable, но push animation расходует actions.
+            # Безопаснее обходить — добавляем как стены.
+            walls.add(pos)
+        elif 'xfmluydglp' in tags:
+            # xfmluydglp sprites (ajdspzphhd, hahdypcdru, irgjxweouz, neltxxziap, xfmluydglp)
+            # имеют collidable=True, могут блокировать движение
+            walls.add(pos)
 
     sr   = lvl.get_data("StartRotation") or 0
     sc   = lvl.get_data("StartColor")    or 9
