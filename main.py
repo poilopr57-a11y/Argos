@@ -394,7 +394,9 @@ class ArgosOrchestrator:
                         log.warning("[WARMUP] GPU%s (%s:%s) не ответил: %s", _idx, _gh, _gp, _e)
 
             # ── Ollama fallback (если не local-gpu или GPU серверы недоступны) ─
-            if not _gpu_warmed or _ai_mode not in ("local-gpu", "gpu", "lg"):
+            _ollama_enabled = os.getenv("OLLAMA_ENABLED", "true").strip().lower()
+            _ollama_ok = _ollama_enabled not in ("0", "false", "no", "off")
+            if _ollama_ok and (not _gpu_warmed or _ai_mode not in ("local-gpu", "gpu", "lg")):
                 try:
                     import requests as _req
                     _host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -404,7 +406,7 @@ class ArgosOrchestrator:
                         _host.rstrip("/") + "/api/generate",
                         json={"model": _model, "prompt": "ping", "stream": False,
                               "options": {"num_ctx": 512, "num_gpu": -1}},
-                        timeout=120,
+                        timeout=60,  # 60s — холодный старт llama3.2:1b ~35-45s
                     )
                     if r.ok:
                         log.info("[WARMUP] ✅ Ollama %s готова к работе", _model)
@@ -412,6 +414,8 @@ class ArgosOrchestrator:
                         log.warning("[WARMUP] Ollama вернула HTTP %s", r.status_code)
                 except Exception as e:
                     log.warning("[WARMUP] Ollama не ответила: %s", e)
+            elif not _ollama_ok:
+                log.info("[WARMUP] Ollama пропущен (OLLAMA_ENABLED=false)")
 
         threading.Thread(target=_warmup_ollama, daemon=True, name="OllamaWarmup").start()
 
@@ -463,6 +467,67 @@ class ArgosOrchestrator:
                     log.warning("[OpenClaw] Gateway не отвечает: %s", e)
             threading.Thread(target=_start_openclaw_gateway, daemon=True, name="OpenClawGateway").start()
 
+        # 6d. Pi Coding Agent — автозапуск если PI_ENABLED=true
+        if os.getenv("PI_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+            def _start_pi_agent():
+                import shutil, subprocess as _sp, time as _t, requests as _req
+                _pi_url = os.getenv("PI_BASE_URL", "http://localhost:18765")
+                try:
+                    r = _req.get(_pi_url + "/health", timeout=3)
+                    if r.ok:
+                        log.info("[Pi] Agent уже запущен: %s", _pi_url)
+                        return
+                except Exception:
+                    pass
+                # Путь к Pi
+                _pi_cmd = os.getenv("PI_CMD", "pi")
+                _pi_path = shutil.which(_pi_cmd) or _pi_cmd
+                if not os.path.exists(_pi_path) and not shutil.which(_pi_cmd):
+                    # Windows npm path
+                    _win_pi = r"C:\Users\AvA\AppData\Roaming\npm\pi.cmd"
+                    if os.path.exists(_win_pi):
+                        _pi_path = _win_pi
+                argoss_dir = os.path.dirname(os.path.abspath(__file__))
+                log.info("[Pi] Запускаю Pi Coding Agent...")
+                # Запуск в режиме сервера (background)
+                proc = _sp.Popen(
+                    [_pi_path, "server"],
+                    cwd=argoss_dir,
+                    stdout=_sp.DEVNULL,
+                    stderr=_sp.DEVNULL,
+                    creationflags=_sp.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    env={**os.environ, "PI_CWD": argoss_dir},
+                )
+                _t.sleep(3)
+                # Сохраняем память Pi
+                _pi_mem_path = os.path.join(argoss_dir, "AGENTS.md")
+                _now = _t.strftime("%Y-%m-%d %H:%M")
+                _pi_mem = f"""\n## Pi Session — {_now}
+- ARGOS: {os.getenv('ARGOS_VERSION', '2.1.3')}
+- Mode: server
+- PID: {proc.pid}
+- URL: {_pi_url}
+"""
+                try:
+                    with open(_pi_mem_path, "a", encoding="utf-8") as _f:
+                        _f.write(_pi_mem)
+                    log.info("[Pi] Память сохранена: %s", _pi_mem_path)
+                except Exception as _me:
+                    log.warning("[Pi] Не удалось сохранить память: %s", _me)
+                    try:
+                        r = _req.get(_pi_url + "/health", timeout=5)
+                        if r.ok:
+                            log.info("[Pi] ✅ Pi Agent запущен (PID %d): %s", proc.pid, _pi_url)
+                        else:
+                            log.warning("[Pi] Agent запущен но /health вернул %s", r.status_code)
+                    except Exception as _pe:
+                        log.warning("[Pi] Agent не отвечает: %s", _pe)
+                except Exception as _e:
+                    log.warning("[Pi] Не удалось запустить: %s", _e)
+            threading.Thread(target=_start_pi_agent, daemon=True, name="PiAgent").start()
+        else:
+            log.info("[Pi] Отключён (PI_ENABLED != 1)")
+
         # 7. Telegram
         self.tg = None  # [FIX-4]
 
@@ -490,6 +555,18 @@ class ArgosOrchestrator:
                     self.core.alerts.stop()
         except Exception as e:
             log.warning("Ошибка при shutdown: %s", e)
+        # Сохраняем память Pi при завершении
+        try:
+            import time as _t
+            argoss_dir = os.path.dirname(os.path.abspath(__file__))
+            _pi_mem_path = os.path.join(argoss_dir, "AGENTS.md")
+            _now = _t.strftime("%Y-%m-%d %H:%M")
+            _pi_mem = f"\n## Pi Shutdown — {_now}\n"
+            with open(_pi_mem_path, "a", encoding="utf-8") as _f:
+                _f.write(_pi_mem)
+            log.info("[Pi] Память сохранена при shutdown")
+        except Exception:
+            pass
 
     def boot_desktop(self):
         # [FIX-GUI-KIVY] Desktop-режим всегда работает только через customtkinter.

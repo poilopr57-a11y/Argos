@@ -1,0 +1,21 @@
+{
+  "name": "ARGOS Universal OS",
+  "version": "2.1.3",
+  "description": "ARGOS Pi Integration — автозапуск Pi Coding Agent при старте ARGOS",
+  "pi": {
+    "autostart": true,
+    "cwd": "F:/debug/argoss",
+    "baseUrl": "http://localhost:18765",
+    "skills": [
+      ".pi/skills/argos-pi-bridge"
+    ]
+  },
+  "subagents": {
+    "agentOverrides": {
+      "pi": {
+        "model": "openai-codex/gpt-5.4-codex",
+        "thinking": "high"
+      }
+    }
+  }
+}
