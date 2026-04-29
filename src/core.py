@@ -3007,9 +3007,66 @@ class ArgosCore:
                 log.debug("[LocalGPU] %s:%s недоступен, пропускаю", server["host"], server["port"])
                 continue
 
-            # Пробуем /completion API (нативный llama.cpp)
-            url = f"http://{server['host']}:{server['port']}/completion"
+            # Пробуем /v1/completions (OpenAI-compatible, primary for DeepSeek)
             try:
+                v1_payload = {
+                    "prompt": prompt,
+                    "temperature": 0.7,
+                    "max_tokens": 512,
+                    "stream": False,
+                    "stop": ["\nПользователь:", "\nUser:", "</s>"],
+                }
+                v1_data = json.dumps(v1_payload).encode("utf-8")
+                v1_url = f"http://{server['host']}:{server['port']}/v1/completions"
+                v1_req = urllib.request.Request(
+                    v1_url,
+                    data=v1_data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(v1_req, timeout=30.0) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+                    answer = result.get("choices", [{}])[0].get("text", "").strip()
+                    if not answer:
+                        answer = result.get("content", "").strip()
+                    if answer:
+                        log.info("[LocalGPU] Ответ от %s через /v1/completions", server["name"])
+                        return answer
+            except Exception as v1_e:
+                log.debug("[LocalGPU] /v1/completions (%s:%s) — %s", server["host"], server["port"], v1_e)
+
+            # Fallback: /v1/chat/completions
+            try:
+                messages = [
+                    {"role": "system", "content": context[:1500]},
+                    {"role": "user", "content": user_text},
+                ]
+                chat_payload = {
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 512,
+                    "stream": False,
+                }
+                chat_data = json.dumps(chat_payload).encode("utf-8")
+                chat_url = f"http://{server['host']}:{server['port']}/v1/chat/completions"
+                chat_req = urllib.request.Request(
+                    chat_url,
+                    data=chat_data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(chat_req, timeout=30.0) as chat_resp:
+                    chat_result = json.loads(chat_resp.read().decode("utf-8"))
+                    answer = chat_result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    if answer:
+                        log.info("[LocalGPU] Ответ от %s через /v1/chat/completions", server["name"])
+                        return answer
+            except Exception as chat_e:
+                log.debug("[LocalGPU] Chat API (%s:%s) — %s", server["host"], server["port"], chat_e)
+
+            # Legacy: /completion (llama.cpp native) — редкий случай
+            try:
+                url = f"http://{server['host']}:{server['port']}/completion"
                 req = urllib.request.Request(
                     url,
                     data=data,
@@ -3020,49 +3077,11 @@ class ArgosCore:
                     result = json.loads(resp.read().decode("utf-8"))
                     answer = result.get("content", "").strip()
                     if answer:
-                        log.info("[LocalGPU] Ответ от %s (%s:%s)", server["name"], server["host"], server["port"])
+                        log.info("[LocalGPU] Ответ от %s через /completion", server["name"])
                         return answer
-            except urllib.error.HTTPError as e:
-                # Если 404, пробуем /v1/chat/completions
-                if e.code == 404:
-                    log.debug("[LocalGPU] /completion не найден, пробую /v1/chat/completions")
-                    try:
-                        messages = [
-                            {"role": "system", "content": context[:1500]},
-                            {"role": "user", "content": user_text},
-                        ]
-                        chat_payload = {
-                            "messages": messages,
-                            "temperature": 0.7,
-                            "max_tokens": 512,
-                            "stream": False,
-                        }
-                        chat_data = json.dumps(chat_payload).encode("utf-8")
-                        chat_url = f"http://{server['host']}:{server['port']}/v1/chat/completions"
-                        chat_req = urllib.request.Request(
-                            chat_url,
-                            data=chat_data,
-                            headers={"Content-Type": "application/json"},
-                            method="POST",
-                        )
-                        with urllib.request.urlopen(chat_req, timeout=30.0) as chat_resp:
-                            chat_result = json.loads(chat_resp.read().decode("utf-8"))
-                            answer = chat_result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                            if answer:
-                                log.info("[LocalGPU] Ответ от %s через chat API", server["name"])
-                                return answer
-                    except Exception as chat_e:
-                        log.warning("[LocalGPU] Chat API тоже не работает: %s", chat_e)
-                else:
-                    # Читаем тело ошибки для диагностики (OOM, прочее)
-                    try:
-                        err_body = e.read().decode("utf-8", errors="replace")[:200]
-                    except Exception:
-                        err_body = str(e)
-                    log.warning("[LocalGPU] HTTP %s от %s:%s — %s",
-                                e.code, server["host"], server["port"], err_body)
             except Exception as e:
-                log.warning("[LocalGPU] Ошибка %s:%s — %s", server["host"], server["port"], e)
+                log.debug("[LocalGPU] /completion (%s:%s) — %s", server["host"], server["port"], e)
+
 
         log.warning("[LocalGPU] Все GPU-серверы недоступны")
         return None
