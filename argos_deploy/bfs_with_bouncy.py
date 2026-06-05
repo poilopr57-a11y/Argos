@@ -108,9 +108,19 @@ def bfs_with_bouncy(player_pos, walls, goals_reqs, rot_ch, col_ch, shape_ch, bou
     return None
 
 
+def gate_blocks_player(gate_pos, gate_size, player_pos, player_size=STEP):
+    """Gate использует bbox-overlap, не top-left match. Проверка пересечения двух bbox."""
+    gx, gy = gate_pos
+    gw, gh = gate_size
+    px, py = player_pos
+    # bbox overlap iff axis-aligned ranges intersect
+    return gx < px + player_size and px < gx + gw and gy < py + player_size and py < gy + gh
+
+
 def extract_level(lvl):
     sprites_list = lvl._sprites if hasattr(lvl, '_sprites') else []
     walls, goals, rot_ch, col_ch, shape_ch, bouncy = set(), [], set(), set(), set(), set()
+    gates = []  # [(pos, (width, height))] — для bbox-overlap проверки
     player_pos = None
     for spr in sprites_list:
         tags = spr.tags or []
@@ -130,13 +140,11 @@ def extract_level(lvl):
         elif 'npxgalaybz' in tags:
             bouncy.add(pos)
         elif 'gbvqrjtaqo' in tags:
-            # Gates (twkzhcfelv) — pushable, но push animation расходует actions.
-            # Безопаснее обходить — добавляем как стены.
-            walls.add(pos)
-        elif 'xfmluydglp' in tags:
-            # xfmluydglp sprites (ajdspzphhd, hahdypcdru, irgjxweouz, neltxxziap, xfmluydglp)
-            # имеют collidable=True, могут блокировать движение
-            walls.add(pos)
+            # Gate — храним size для bbox-overlap проверки (пока не блокируем — пушабельны)
+            w = spr.width if hasattr(spr, 'width') else STEP
+            h = spr.height if hasattr(spr, 'height') else STEP
+            gates.append((pos, (w, h)))
+        # xfmluydglp: collidable=True, но invisible — не блокируем (тестируем)
 
     sr   = lvl.get_data("StartRotation") or 0
     sc   = lvl.get_data("StartColor")    or 9
@@ -160,6 +168,9 @@ def extract_level(lvl):
         gci = COLORS.index(gc[gi]) if gi < len(gc)   and gc[gi]   in COLORS else 0
         gsi = gshp[gi]             if gi < len(gshp) else gshp[0]
         goals_reqs[gp] = (gri, gci, gsi)
+
+    # Gates НЕ блокируем — они пушабельны (14 actions cost), пусть BFS их игнорит.
+    # При фактической игре проходимы, хоть и медленно.
 
     return {
         'player_pos': player_pos,
