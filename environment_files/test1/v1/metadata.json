@@ -1,0 +1,9 @@
+{
+  "game_id": "test1-v1",
+  "local_dir": "environment_files\\test1\\v1",
+  "class_name": "Test1",
+  "tags": [
+    "test",
+    "simple"
+  ]
+}

@@ -1,0 +1,63 @@
+
+import random
+from arcengine import (
+    ARCBaseGame,
+    Camera,
+    GameAction,
+    Level,
+    Sprite,
+)
+
+# Простая игра: кликни на спрайт, чтобы удалить его
+BACKGROUND_COLOR = 0
+PADDING_COLOR = 4
+
+sprites = {
+    "target": Sprite(
+        pixels=[[9]],
+        name="target",
+        visible=True,
+        collidable=True,
+    ),
+}
+
+levels = [
+    Level(sprites=[], grid_size=(8, 8)),
+]
+
+class Test1(ARCBaseGame):
+    def __init__(self, seed: int = 0) -> None:
+        self._rng = random.Random(seed)
+        camera = Camera(
+            background=BACKGROUND_COLOR,
+            letter_box=PADDING_COLOR,
+            width=8,
+            height=8,
+        )
+        super().__init__(
+            game_id="test1",
+            levels=levels,
+            camera=camera,
+        )
+
+    def on_set_level(self, level: Level) -> None:
+        # Добавляем один спрайт в центр
+        sprite = sprites["target"].clone().set_position(4, 4)
+        self.current_level.add_sprite(sprite)
+
+    def _check_win(self) -> bool:
+        return len(self.current_level._sprites) == 0
+
+    def step(self) -> None:
+        if self.action.id == GameAction.ACTION6:
+            x = self.action.data.get("x", 0)
+            y = self.action.data.get("y", 0)
+            coords = self.camera.display_to_grid(x, y)
+            if coords:
+                grid_x, grid_y = coords
+                clicked = self.current_level.get_sprite_at(grid_x, grid_y)
+                if clicked:
+                    self.current_level.remove_sprite(clicked)
+                    if self._check_win():
+                        self.next_level()
+        self.complete_action()
