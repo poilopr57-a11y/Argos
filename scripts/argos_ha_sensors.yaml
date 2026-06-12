@@ -1,0 +1,49 @@
+# ARGOS → Home Assistant REST-сенсоры (РЕАЛЬНЫЕ данные, не заглушки).
+# Куда: на НОУТБУКЕ (где HA), добавить в /config/configuration.yaml (или packages/).
+# ARGOS REST API живёт на Орионе: http://192.168.1.72:8002
+# Дополняет MQTT-publisher (153 сущности уже в HA). После правки — Перезагрузить HA.
+
+rest:
+  # Системный статус Ориона (CPU/RAM/disk/GPU) — реальный psutil + nvidia-smi
+  - resource: http://192.168.1.72:8002/api/system/status
+    scan_interval: 30
+    sensor:
+      - name: "Orion CPU"
+        value_template: "{{ value_json.cpu_percent }}"
+        unit_of_measurement: "%"
+        icon: mdi:cpu-64-bit
+      - name: "Orion RAM"
+        value_template: "{{ value_json.ram_percent }}"
+        unit_of_measurement: "%"
+        icon: mdi:memory
+      - name: "Orion Disk Free"
+        value_template: "{{ value_json.disk_free_gb }}"
+        unit_of_measurement: "GB"
+        icon: mdi:harddisk
+      - name: "Orion GPU Temp"
+        value_template: "{{ value_json.gpu.temp }}"
+        unit_of_measurement: "°C"
+        icon: mdi:thermometer
+      - name: "Orion GPU Usage"
+        value_template: "{{ value_json.gpu.usage }}"
+        unit_of_measurement: "%"
+        icon: mdi:expansion-card
+
+  # Статус Brain (реальный :5001)
+  - resource: http://192.168.1.72:8002/api/argos/brain
+    scan_interval: 60
+    binary_sensor:
+      - name: "ARGOS Brain Online"
+        value_template: "{{ value_json.online }}"
+        device_class: connectivity
+
+# Lovelace-карточка (вставить в дашборд):
+# - type: entities
+#   title: ARGOS Orion
+#   entities:
+#     - sensor.orion_cpu
+#     - sensor.orion_ram
+#     - sensor.orion_disk_free
+#     - sensor.orion_gpu_temp
+#     - sensor.orion_gpu_usage
+#     - binary_sensor.argos_brain_online
