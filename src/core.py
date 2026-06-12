@@ -10,6 +10,7 @@ import time
 import base64
 import uuid
 import subprocess
+import datetime
 from collections import deque
 from pathlib import Path
 
@@ -139,6 +140,14 @@ class _GeminiResponse:
 
 class _GeminiCompatClient:
     """Лёгкий адаптер google.genai под старый интерфейс generate_content()."""
+    DEFAULT_MODELS = (
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    )
+    DEPRECATED_MODEL_PREFIXES = ("gemini-1.5",)
+
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
         # trust_env=False — игнорировать системный прокси Windows (Mihomo/Clash/NekoRay)
         # Создаём клиента: сначала пробуем с http_options, иначе стандартно
@@ -157,20 +166,51 @@ class _GeminiCompatClient:
             self.client = genai_sdk.Client(api_key=api_key)
         self.model_name = self._resolve_model_name(model_name)
 
-    def _resolve_model_name(self, requested: str) -> str:
+    @classmethod
+    def _allow_deprecated_models(cls) -> bool:
+        return (os.getenv("ARGOS_ALLOW_DEPRECATED_GEMINI_MODELS", "") or "").strip().lower() in {
+            "1", "true", "on", "yes", "да", "вкл"
+        }
+
+    @classmethod
+    def _is_deprecated_model(cls, model_name: str) -> bool:
+        lowered = (model_name or "").strip().lower()
+        return any(lowered.startswith(prefix) for prefix in cls.DEPRECATED_MODEL_PREFIXES)
+
+    @classmethod
+    def _split_model_list(cls, raw: str) -> list[str]:
+        if not raw:
+            return []
+        return [item.strip() for item in re.split(r"[,;\s]+", raw) if item.strip()]
+
+    @classmethod
+    def _gemini_model_candidates(cls, requested: str = "") -> list[str]:
         env_model = os.getenv("GEMINI_MODEL", "").strip()
         if env_model:
             requested = env_model
 
         candidates = [
             requested,
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-            "gemini-1.5-pro",
+            *cls._split_model_list(os.getenv("GEMINI_MODEL_CANDIDATES", "")),
+            *cls.DEFAULT_MODELS,
         ]
+
+        seen: set[str] = set()
+        result: list[str] = []
+        allow_deprecated = cls._allow_deprecated_models()
+        for model_name in candidates:
+            if not model_name or model_name in seen:
+                continue
+            if cls._is_deprecated_model(model_name) and not allow_deprecated:
+                log.warning("Gemini: пропускаю устаревшую модель %s", model_name)
+                continue
+            seen.add(model_name)
+            result.append(model_name)
+        return result
+
+    def _resolve_model_name(self, requested: str) -> str:
+        candidates = self._gemini_model_candidates(requested)
+        requested = candidates[0] if candidates else (requested or "gemini-2.5-flash")
 
         try:
             available = []
@@ -201,19 +241,38 @@ class _GeminiCompatClient:
             prompt = "\n\n".join(str(x) for x in contents if isinstance(x, str) and x.strip())
         else:
             prompt = str(contents)
-        try:
-            resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        except Exception as first_error:
-            # Попытка один раз переключиться на доступную модель (404/NOT_FOUND и совместимость API)
-            new_model = self._resolve_model_name("gemini-2.5-flash")
-            if new_model != self.model_name:
-                self.model_name = new_model
-                resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-            else:
-                raise first_error
 
-        text = getattr(resp, "text", "") or ""
-        return _GeminiResponse(text=text)
+        # Список моделей для fallback. Устаревшие 1.5-модели исключены по умолчанию:
+        # в 2026 они часто возвращают 404 и забивают лог ложной "квотой".
+        fallback_models = self._gemini_model_candidates(self.model_name)
+        seen = set()
+        tried = []
+        last_err = None
+
+        for m in fallback_models:
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            tried.append(m)
+            try:
+                resp = self.client.models.generate_content(model=m, contents=prompt)
+                # Запоминаем рабочую модель для следующих вызовов
+                self.model_name = m
+                text = getattr(resp, "text", "") or ""
+                return _GeminiResponse(text=text)
+            except Exception as err:
+                last_err = err
+                err_s = str(err).lower()
+                # Квота/429/rate — пробуем следующую (у неё своя квота)
+                if "429" in err_s or "quota" in err_s or "resource_exhausted" in err_s or "rate" in err_s:
+                    continue
+                # Модель не найдена/недоступна — тоже к следующей
+                if "not found" in err_s or "not supported" in err_s or "404" in err_s:
+                    continue
+                # Другие ошибки (auth, network) — прерываем сразу
+                raise
+
+        raise RuntimeError(f"Gemini: не удалось использовать модели {tried} — last: {last_err}")
 
 
 # [v1.20.5 Integration Imports]
@@ -374,6 +433,7 @@ class ArgosCore:
         self.gemini_rpm_limit = 15
         self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
         self._last_gemini_rate_limited = False
+        self._gemini_via_proxy = False
         self._gigachat_access_token = _read_secret_env("GIGACHAT_ACCESS_TOKEN") or None
         self._gigachat_token_expires_at = 0.0
         cooldown_raw = os.getenv("ARGOS_PROVIDER_FAILURE_COOLDOWN", str(_DEFAULT_PROVIDER_COOLDOWN_SECONDS))
@@ -478,6 +538,12 @@ class ArgosCore:
             try:
                 self.evolution_engine = _EvolutionEngine(self)
                 log.info("EvolutionEngine: OK")
+                # [AUTO-EVOLUTION] Автоматически запускаем фоновую эволюцию
+                try:
+                    auto_msg = self.evolution_engine.start_auto()
+                    log.info("EvolutionEngine: %s", auto_msg)
+                except Exception as e2:
+                    log.warning("EvolutionEngine auto-start: %s", e2)
             except Exception as e:
                 log.warning("EvolutionEngine: %s", e)
         else:
@@ -1068,14 +1134,16 @@ class ArgosCore:
         try:
             from src.awa_core import AWACore
             self.awa = AWACore(core=self)
-            # Подключаем ContextDB к DialogContext
-            if self.memory:
-                try:
-                    from src.db_init import ContextDB
-                    self.context.db = ContextDB()
-                    log.info("ContextDB: подключена к DialogContext")
-                except Exception as e:
-                    log.warning("ContextDB init: %s", e)
+            try:
+                from src.db_init import ContextDB, init_db
+                init_db()
+                ctx_db = ContextDB()
+                self.db = ctx_db
+                if self.memory and hasattr(self, "context"):
+                    self.context.db = ctx_db
+                log.info("ContextDB: подключена (self.db и self.context.db)")
+            except Exception as e:
+                log.warning("ContextDB init: %s", e)
             log.info("AWA-Core: OK (Model Splitting активен)")
         except Exception as e:
             self.awa = None
@@ -1146,6 +1214,10 @@ class ArgosCore:
         "echo ", "touch ", "chmod ", "chown ",
         "wget ", "curl ", "ping ", "tracert ",
         "netstat ", "ipconfig", "ifconfig",
+        "ps ", "top ", "htop ", "kill ",
+        "df ", "du ", "free ", "uname ",
+        "mount ", "umount ", "ssh ", "scp ",
+        "tar ", "zip ", "unzip ", "grep ", "sed ", "awk ",
         "список процессов", "убей процесс",
         "статус системы", "чек-ап",
         "осознай систему", "осознай свою систему", "осознай проект",
@@ -1292,6 +1364,25 @@ class ArgosCore:
         target_markers = ("систем", "проект", "файл", "структур", "ядр", "навык", "модул")
         return any(m in t for m in scan_markers) and any(m in t for m in target_markers)
 
+    def _looks_like_self_capabilities_request(self, text: str) -> bool:
+        t = (text or "").lower().strip()
+        if not t:
+            return False
+        explicit = (
+            "кто ты", "что ты", "что ты умеешь", "что умеешь", "твои возможности",
+            "какие у тебя возможности", "покажи возможности", "покажи свои возможности",
+            "возможности аргоса", "возможности argos", "что умеет аргос",
+            "что умеет argos", "самопрофиль", "self profile", "self_profile",
+            "self status", "argos self", "осознай себя", "осознай свои возможности",
+            "осознание возможностей", "что у тебя подключено", "какие модули у тебя",
+            "баг аргос не осознает", "аргос не осознает",
+        )
+        if t in explicit or any(t.startswith(prefix) for prefix in explicit):
+            return True
+        awareness_markers = ("осозна", "само", "кто ты", "возможност", "уме", "способност")
+        target_markers = ("аргос", "argos", "себ", "свои", "система", "ты")
+        return any(marker in t for marker in awareness_markers) and any(marker in t for marker in target_markers)
+
     def _extract_direct_url(self, text: str) -> str | None:
         raw = (text or "").strip()
         if not raw:
@@ -1347,6 +1438,49 @@ class ArgosCore:
         if weak_hits >= 2:
             return True
 
+        # Telegram exports often contain long architecture/spec/code chunks without
+        # explicit <system>/<user> wrappers. Treat those as material to analyze,
+        # not as shell/autogpt commands.
+        technical_markers = (
+            "argos specification",
+            "argos trust model",
+            "epistemic state machine",
+            "transition authority",
+            "transition_authorities",
+            "verification record",
+            "verifier_provenance_required",
+            "self_certification_forbidden",
+            "no_state_without_evidence",
+            "source_diversity",
+            "evidence decay",
+            "blocked_unverifiable",
+            "blocked_unmodeled",
+            "validated_observation",
+            "master_consensus_daemon",
+            "confidence_threshold",
+            "calculate_integral_confidence",
+        )
+        technical_hits = sum(1 for marker in technical_markers if marker in lower)
+        if len(normalized) > 700 and technical_hits >= 2:
+            return True
+
+        code_like_lines = 0
+        for line in lines:
+            stripped = line.strip()
+            if (
+                stripped.startswith(("def ", "class ", "return ", "raise ", "if ", "elif ", "else:", "for ", "from ", "import "))
+                or stripped.startswith(("self.", "async def ", "@"))
+                or " = " in stripped
+                or stripped.endswith(("{", "}", "):", "},", "],"))
+            ):
+                code_like_lines += 1
+        if len(normalized) > 900 and code_like_lines >= 6:
+            return True
+
+        markdown_heads = sum(1 for line in lines if line.lstrip().startswith(("#", ">", "-", "*", "|")))
+        if len(normalized) > 1000 and markdown_heads >= 8 and technical_hits >= 1:
+            return True
+
         return False
 
     def _analyze_bulk_text_dump(self, text: str) -> str:
@@ -1358,6 +1492,17 @@ class ArgosCore:
 
         if "traceback (most recent call last)" in lower or "telegram.error." in lower:
             kind = "лог/traceback"
+        elif any(marker in lower for marker in (
+            "argos specification",
+            "argos trust model",
+            "epistemic state machine",
+            "transition_authorities",
+            "verification record",
+            "source_diversity",
+            "evidence decay",
+            "confidence_threshold",
+        )):
+            kind = "архитектурная спецификация / technical dump"
         elif any(marker in lower for marker in (
             "user interaction metadata",
             "recent conversation content",
@@ -1546,6 +1691,309 @@ class ArgosCore:
         )
         return "\n".join(lines)
 
+    def _runtime_capability_snapshot(self, admin=None) -> dict:
+        import socket
+        import subprocess
+        import sys
+        import urllib.request
+
+        inv = self._scan_project_inventory()
+
+        def _has_attr(attr: str) -> bool:
+            return getattr(self, attr, None) is not None
+
+        subsystems = []
+        for attr, label in (
+            ("memory", "долгая память/RAG"),
+            ("context", "диалоговый контекст"),
+            ("skill_loader", "загрузчик навыков"),
+            ("module_loader", "динамические модули"),
+            ("tool_calling", "tool calling"),
+            ("vision", "vision/OCR"),
+            ("p2p", "P2P mesh"),
+            ("iot_bridge", "IoT bridge"),
+            ("iot_hub", "IoT hub"),
+            ("industrial", "industrial protocols"),
+            ("ha", "Home Assistant"),
+            ("curiosity", "curiosity/idle analysis"),
+            ("consciousness", "collective consciousness"),
+            ("self_model_v2", "SelfModelV2"),
+            ("argoss_evolver", "Argoss evolver"),
+            ("web_explorer", "web explorer"),
+        ):
+            if _has_attr(attr):
+                subsystems.append(label)
+
+        ai_mode = "unknown"
+        try:
+            ai_mode = self.ai_mode_label() if hasattr(self, "ai_mode_label") else str(getattr(self, "ai_mode", "unknown"))
+        except Exception:
+            ai_mode = str(getattr(self, "ai_mode", "unknown"))
+
+        providers = []
+        provider_checks = (
+            ("OpenAI", ("OPENAI_API_KEY",)),
+            ("Grok/xAI", ("XAI_API_KEY", "GROK_API_KEY")),
+            ("Groq", ("GROQ_API_KEY",)),
+            ("DeepSeek", ("DEEPSEEK_API_KEY",)),
+            ("Kimi", ("KIMI_API_KEY", "MOONSHOT_API_KEY")),
+            ("Gemini", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+            ("YandexGPT", ("YANDEXGPT_IAM_TOKEN", "YANDEXGPT_API_KEY", "YANDEX_IAM_TOKEN")),
+            ("Cloudflare", ("CLOUDFLARE_API_TOKEN", "CF_API_TOKEN")),
+        )
+        for name, keys in provider_checks:
+            if any(os.getenv(key) for key in keys):
+                providers.append(name)
+        if getattr(self, "model", None):
+            providers.append("Gemini(model)")
+
+        ports = {}
+        for port, label in (
+            (8000, "MCP/API"),
+            (8080, "Dashboard"),
+            (8006, "Xiaozhi ESP server"),
+            (8082, "GPU RX580"),
+            (8083, "GPU slot 1"),
+            (8084, "GPU RX560"),
+            (8085, "V100/llama-server"),
+            (11434, "Ollama"),
+        ):
+            ok = False
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                    ok = True
+            except Exception:
+                ok = False
+            ports[label] = "online" if ok else "offline"
+
+        gpu = "не подтверждён"
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_lines = []
+                for raw in result.stdout.strip().splitlines()[:3]:
+                    parts = [part.strip() for part in raw.split(",")]
+                    name = parts[0] if parts else "GPU"
+                    util = parts[1] if len(parts) > 1 else "?"
+                    used = parts[2] if len(parts) > 2 else "?"
+                    total = parts[3] if len(parts) > 3 else "?"
+                    gpu_lines.append(f"{name} util={util}% vram={used}/{total}MB")
+                gpu = "; ".join(gpu_lines)
+        except Exception:
+            pass
+
+        system = {
+            "python": sys.version.split()[0],
+            "cpu": "unknown",
+            "ram": "unknown",
+        }
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            system["cpu"] = f"{psutil.cpu_count(logical=True)} logical, load={psutil.cpu_percent(interval=0.1):.1f}%"
+            system["ram"] = f"{vm.total // (1024**2)}MB total, {vm.available // (1024**2)}MB free"
+        except Exception:
+            if admin is not None:
+                try:
+                    system["cpu"] = str(admin.get_stats())
+                except Exception:
+                    pass
+
+        obsidian = "offline"
+        try:
+            from src.connectivity.obsidian_mcp import ObsidianMCP
+            obs = ObsidianMCP()
+            if obs.is_available():
+                vault = getattr(obs, "vault_path", "")
+                count = 0
+                try:
+                    count = sum(1 for _ in Path(vault).rglob("*.md"))
+                except Exception:
+                    count = 0
+                obsidian = f"online vault={vault} notes={count}"
+        except Exception as exc:
+            obsidian = f"error: {exc}"
+
+        xiaozhi = "offline"
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8006/health", timeout=0.8) as resp:
+                raw = resp.read(1200).decode("utf-8", errors="ignore")
+                xiaozhi = f"online {raw[:220]}"
+        except Exception:
+            pass
+
+        mcp_tools = [
+            "command", "providers", "skills", "status", "limits", "self_profile",
+            "gpu_status", "argoss_system_diagnostics", "obsidian_status/search/read/daily",
+            "xiaozhi_status", "mempalace", "headroom", "ollama_vision", "orangepi_bridge",
+            "orangepi_gadget", "pi_bridge", "xilinx_fpga", "cloudflare_chat", "npm",
+        ]
+
+        return {
+            "inventory": inv,
+            "subsystems": subsystems,
+            "ai_mode": ai_mode,
+            "providers": providers,
+            "ports": ports,
+            "gpu": gpu,
+            "system": system,
+            "obsidian": obsidian,
+            "xiaozhi": xiaozhi,
+            "mcp_tools": mcp_tools,
+        }
+
+    def _self_capabilities_prompt_context(self, admin=None) -> str:
+        snap = self._runtime_capability_snapshot(admin)
+        inv = snap["inventory"]
+        online_ports = [name for name, state in snap["ports"].items() if state == "online"]
+        return "\n".join(
+            [
+                "## ДОКАЗАТЕЛЬНЫЙ SELF-PROFILE ARGOS",
+                "Правило ESM/TAM: не самосертифицируй гипотезы. Называй KNOWN только то, что подтверждено runtime-наблюдением.",
+                f"OBSERVATION: project_root={inv['root']}; src_py={inv['src_py_files']}; skills={len(inv['skills'])}; python={snap['system']['python']}",
+                f"OBSERVATION: ai_mode={snap['ai_mode']}; providers_configured={', '.join(snap['providers']) or 'none'}",
+                f"OBSERVATION: online_ports={', '.join(online_ports) or 'none'}",
+                f"OBSERVATION: gpu={snap['gpu']}",
+                f"OBSERVATION: obsidian={snap['obsidian']}",
+                f"OBSERVATION: xiaozhi={snap['xiaozhi'][:260]}",
+                f"AVAILABLE_TOOLS: {', '.join(snap['mcp_tools'])}",
+                f"LOADED_SUBSYSTEMS: {', '.join(snap['subsystems']) or 'base core only'}",
+                "INTERPRETATION: ты можешь выполнять реальные действия через direct intent/MCP/skills, если соответствующий модуль online.",
+                "INFERRED: любые заявления о тренировке, датасете или скрытых процессах требуют process command line/log/evidence_hash.",
+            ]
+        )
+
+    def _self_capabilities_report(self, admin=None) -> str:
+        snap = self._runtime_capability_snapshot(admin)
+        inv = snap["inventory"]
+        online_ports = [f"{name}:{state}" for name, state in snap["ports"].items() if state == "online"]
+        offline_ports = [f"{name}:{state}" for name, state in snap["ports"].items() if state != "online"]
+        lines = [
+            "🧠 ARGOS SELF-PROFILE / ВОЗМОЖНОСТИ",
+            "",
+            "OBSERVATION — подтверждено runtime:",
+            f"- Проект: {inv['root']}",
+            f"- Python: {snap['system']['python']}; CPU: {snap['system']['cpu']}; RAM: {snap['system']['ram']}",
+            f"- Кодовая база: src Python-файлов={inv['src_py_files']}, навыков={len(inv['skills'])}",
+            f"- Ключевые файлы: {', '.join(inv['key_files']) or 'не найдены'}",
+            f"- GPU: {snap['gpu']}",
+            f"- AI mode: {snap['ai_mode']}; настроенные провайдеры: {', '.join(snap['providers']) or 'нет'}",
+            f"- Online сервисы: {', '.join(online_ports) or 'нет'}",
+            f"- Offline/не подтверждены: {', '.join(offline_ports) or 'нет'}",
+            f"- Obsidian: {snap['obsidian']}",
+            f"- Xiaozhi ESP: {snap['xiaozhi'][:500]}",
+            "",
+            "AVAILABLE — что можно вызывать:",
+            f"- MCP tools: {', '.join(snap['mcp_tools'])}",
+            f"- Loaded subsystems: {', '.join(snap['subsystems']) or 'только базовое ядро'}",
+            f"- Skills sample: {', '.join(inv['skills'][:24]) or 'нет'}",
+            "",
+            "ESM/TAM правило:",
+            "- OBSERVATION = факт из runtime/логов/портов/файлов.",
+            "- INTERPRETATION = вывод из наблюдений.",
+            "- INFERRED = гипотеза, пока нет внешней проверки.",
+            "- KNOWN нельзя ставить самому себе без verifier/evidence. Это запрещает самосертификацию.",
+            "",
+            "Команды для проверки:",
+            "- self_profile / возможности аргоса / что ты умеешь",
+            "- providers, skills, gpu_status, argoss_system_diagnostics",
+            "- obsidian_status, xiaozhi_status, mempalace status",
+        ]
+        return "\n".join(lines)
+
+    def _looks_like_obsidian_context_request(self, text: str) -> bool:
+        t = (text or "").lower().strip()
+        if not t:
+            return False
+        exact = {
+            "контекст", "обсидиан контекст", "obsidian context", "память контекст",
+            "продолжай", "продолжить", "что делали", "что было", "история",
+        }
+        if t in exact:
+            return True
+        prefixes = (
+            "контекст ", "продолжай ", "продолжить ", "что делали по ",
+            "что делали с ", "что было по ", "найди в obsidian", "обсидиан ",
+            "obsidian ", "память по ", "вспомни ",
+        )
+        if any(t.startswith(prefix) for prefix in prefixes):
+            return True
+        markers = ("telegram", "телеграм", "esp", "xiaozhi", "obsidian", "обсидиан", "граф", "vault")
+        intent = ("контекст", "продолж", "вспом", "что делали", "истори")
+        return any(i in t for i in intent) and any(m in t for m in markers)
+
+    def _build_obsidian_context_packet(self, query: str, limit: int = 8) -> str:
+        try:
+            from src.connectivity.obsidian_mcp import ObsidianMCP
+            obsidian = ObsidianMCP()
+        except Exception as exc:
+            return f"🧠 Контекст из Obsidian\n\nObsidian MCP недоступен: {exc}"
+
+        if not obsidian.is_available():
+            return "🧠 Контекст из Obsidian\n\nVault недоступен или не настроен."
+
+        lines = [
+            "🧠 Контекст из Obsidian",
+            f"Vault: {getattr(obsidian, 'vault_path', 'unknown')}",
+            f"Запрос: {query}",
+            "",
+            "## Канонические заметки",
+        ]
+        core_paths = [
+            "03 Memory/Контекст работы.md",
+            "03 Memory/Карта памяти.md",
+            "00 Memory Web/ARGOS Memory Web.md",
+            "03 Memory/Telegram History.md",
+        ]
+        for path in core_paths:
+            try:
+                content = obsidian.read_note(path)
+            except Exception:
+                content = ""
+            if content:
+                preview = " ".join(content.strip().split())[:260]
+                lines.append(f"- {path}: {preview}")
+
+        seen: set[str] = set(core_paths)
+        try:
+            hits = obsidian.search_notes(query, limit=limit)
+        except Exception:
+            hits = []
+        if hits:
+            lines.extend(["", "## Найдено по запросу"])
+            for hit in hits[:limit]:
+                path = str(hit.get("path") or hit.get("name") or "")
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                preview = str(hit.get("preview") or "").replace("\n", " ")[:220]
+                lines.append(f"- {path}: {preview}")
+
+        try:
+            recent = obsidian.recent_notes("02 Logs", limit=4)
+        except Exception:
+            recent = []
+        if recent:
+            lines.extend(["", "## Свежие логи"])
+            for note in recent[:4]:
+                path = str(note.get("path") or note.get("name") or "")
+                if path and path not in seen:
+                    lines.append(f"- {path}")
+                    seen.add(path)
+
+        lines.extend(
+            [
+                "",
+                "ESM: это OBSERVATION из локального vault. Выводы поверх него остаются INTERPRETATION/INFERRED, пока не проверены логами или runtime-командами.",
+            ]
+        )
+        return "\n".join(lines)
+
     def _classify_input(self, text: str) -> str:
         t = (text or "").strip()
         if not t:
@@ -1591,6 +2039,9 @@ class ArgosCore:
         Возвращает строку-ответ или None если команда не распознана.
         """
         t = text.lower().strip()
+
+        if self._looks_like_self_capabilities_request(t):
+            return self._self_capabilities_report(admin)
 
         # Проверяем префиксы прямых команд
         matched = self._extract_direct_url(text) is not None or self._looks_like_awareness_scan_request(t) or any(
@@ -1907,8 +2358,9 @@ class ArgosCore:
 
         self._persona_profile_name = profile_name
         self._persona_profile_prompt = profile_prompt
-        if self.ai_mode not in ("openai", "auto", "ollama"):
-            self.ai_mode = "openai"
+        # Не меняем ai_mode на openai — оставляем auto для failover цепочки
+        if self.ai_mode not in ("openai", "auto", "ollama", "deepseek", "claude", "groq", "cloudflare", "kimi"):
+            self.ai_mode = "auto"
 
         return (
             f"✅ Профиль подключен: {profile_name}\n"
@@ -1935,16 +2387,23 @@ class ArgosCore:
 
     def _setup_ai(self):
         gemini_disabled = _env_disabled("ARGOS_DISABLE_GEMINI")
+        _gcp_url = os.getenv("ARGOS_GCP_URL", "").strip()
         key = _read_secret_env("GEMINI_API_KEY") or _read_secret_env("GEMINI_API_KEY_0")
-        if not gemini_disabled and GEMINI_OK and key:
-            self.model = _GeminiCompatClient(api_key=key, model_name="gemini-2.5-flash")
-            log.info("Gemini: OK")
+        if not gemini_disabled:
+            if key and GEMINI_OK:
+                self.model = _GeminiCompatClient(api_key=key, model_name="gemini-2.5-flash")
+                log.info("Gemini: OK (прямое API)")
+            elif _gcp_url:
+                self.model = None  # GCP proxy не нужен self.model
+                self._gemini_via_proxy = True
+                log.info("Gemini: OK через GCP proxy (обход гео-блока РФ)")
+            else:
+                self.model = None
+                log.info("Gemini недоступен — нет ключа и GCP proxy")
         else:
             self.model = None
-            if gemini_disabled:
-                log.info("Gemini отключен через ARGOS_DISABLE_GEMINI")
-            else:
-                log.info("Gemini недоступен — используется Ollama")
+            self._gemini_via_proxy = False
+            log.info("Gemini отключен через ARGOS_DISABLE_GEMINI")
 
         # Always start Ollama so it is ready as a fallback even when a cloud
         # provider (e.g. Gemini) is configured but later turns out to have an
@@ -2131,11 +2590,30 @@ class ArgosCore:
         self._last_gemini_rate_limited = False
         if self._is_provider_temporarily_disabled("Gemini"):
             return None
+
+        # GCP proxy: обход гео-блока РФ для Gemini (приоритет если нет прямого API ключа)
+        _gcp_url = os.getenv("ARGOS_GCP_URL", "").strip()
+        if _gcp_url and not self.model:
+            if not self._gemini_limiter.allow():
+                self._last_gemini_rate_limited = True
+                log.warning(self._gemini_rate_limit_text())
+                return None
+            try:
+                return self._ask_gemini_via_gcp_proxy(context, user_text, _gcp_url)
+            except Exception as e:
+                log.warning("Gemini через GCP proxy не удался: %s", e)
+                return None
+
+        # Прямое API (может быть гео-заблокировано в РФ)
         if not self.model:
             return None
         if not self._gemini_limiter.allow():
             self._last_gemini_rate_limited = True
             log.warning(self._gemini_rate_limit_text())
+            return None
+
+        # Прямое API (может быть гео-заблокировано в РФ)
+        if not self.model:
             return None
         try:
             hist = self.context.get_prompt_context()
@@ -2150,6 +2628,42 @@ class ArgosCore:
                 self._disable_provider_temporarily("Gemini", "geo-blocked (location not supported)")
                 log.warning("Gemini заблокирован по гео — отключаю на 1 час")
             log.error("Gemini: %s", e)
+            return None
+
+    def _ask_gemini_via_gcp_proxy(self, context: str, user_text: str, gcp_url: str) -> str | None:
+        """Gemini через GCP Cloud Run proxy — обход гео-блока РФ.
+        Использует Google native API формат (/v1/models/MODEL:generateContent)."""
+        import urllib.parse as _up
+        if not self._is_host_reachable(_up.urlparse(gcp_url).hostname, 443):
+            log.debug("Gemini GCP proxy: хост недоступен")
+            return None
+        hist = self.context.get_prompt_context()
+        candidates = _GeminiCompatClient._gemini_model_candidates("gemini-2.5-flash")
+        model = candidates[0] if candidates else "gemini-2.5-flash"
+        url = f"{gcp_url}/proxy/gemini/v1/models/{model}:generateContent"
+        full_text = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
+        try:
+            resp = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": full_text}]}],
+                    "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1200},
+                },
+                timeout=30,
+            )
+            if not resp.ok:
+                log.error("Gemini GCP proxy: HTTP %s %s", resp.status_code, resp.text[:200])
+                return None
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    return parts[0].get("text", "")
+            return None
+        except Exception as e:
+            log.error("Gemini GCP proxy: %s", e)
             return None
 
     def _ask_gigachat(self, context: str, user_text: str) -> str | None:
@@ -2268,6 +2782,36 @@ class ArgosCore:
             log.error("YandexGPT: %s", e)
             return None
 
+    def _ask_claude(self, context: str, user_text: str) -> str | None:
+        """Запрос к Anthropic Claude API."""
+        if self._is_provider_temporarily_disabled("Claude"):
+            return None
+        key = _read_secret_env("ANTHROPIC_API_KEY")
+        if not key:
+            return None
+        model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=key)
+            messages = [{"role": "user", "content": user_text}]
+            kwargs = {"model": model, "max_tokens": 4096, "messages": messages}
+            if context:
+                kwargs["system"] = context
+            msg = client.messages.create(**kwargs)
+            return msg.content[0].text if msg.content else None
+        except ImportError:
+            import requests
+            headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+            body = {"model": model, "max_tokens": 4096, "messages": [{"role": "user", "content": user_text}]}
+            if context:
+                body["system"] = context
+            r = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=body, timeout=60)
+            return r.json()["content"][0]["text"]
+        except Exception as e:
+            log.error("Claude: %s", e)
+            self._disable_provider_temporarily("Claude", str(e))
+            return None
+
     def _ask_kimi(self, context: str, user_text: str) -> str | None:
         """Запрос к Kimi K2.5 API (Moonshot AI)."""
         if self._is_provider_temporarily_disabled("Kimi"):
@@ -2350,7 +2894,7 @@ class ArgosCore:
         cfg = {
             "Groq":       (("GROQ_API_KEY",),               "https://api.groq.com/openai/v1", "llama3-70b-8192"),
             "DeepSeek":   (("DEEPSEEK_API_KEY",),           "https://api.deepseek.com/v1",    "deepseek-chat"),
-            "OpenAI":     (("OPENAI_API_KEY",),             "https://api.openai.com/v1",      "gpt-4o-mini"),
+            "OpenAI":     (("OPENAI_API_KEY",),             "https://argos-core-m3gk27ccqa-uc.a.run.app/proxy/openai/v1", "gpt-4o-mini"),
             "Grok":       (("XAI_API_KEY", "GROK_API_KEY"), "https://api.x.ai/v1",            "grok-3-mini-beta"),
             "Cloudflare": (("CLOUDFLARE_API_TOKEN",),       _cf_base,                         "@cf/moonshotai/kimi-k2.5"),
         }
@@ -2486,22 +3030,46 @@ class ArgosCore:
 
         log.info("[Ollama] Проверяю доступность: %s", ping_url)
 
-        # Быстрая проверка — уже работает?
-        try:
-            requests.get(ping_url, timeout=3)
-            log.info("[Ollama] ✅ Уже запущен (%s)", ping_url)
-            return True
-        except Exception as _e:
-            log.info("[Ollama] Не отвечает при быстрой проверке: %s", _e)
+        # ── Проверка с ретраями (туннель может быть временно занят) ──
+        _no_autostart = os.getenv("ARGOS_OLLAMA_NO_AUTOSTART", "").strip().lower() in (
+            "1", "true", "on", "yes", "да", "вкл",
+        )
+        _max_retries = 1 if _no_autostart else 0  # retry once if no-autostart (tunnel)
+
+        for _attempt in range(1 + _max_retries):
+            try:
+                requests.get(ping_url, timeout=5)
+                log.info("[Ollama] ✅ Уже запущен (%s)", ping_url)
+                return True
+            except Exception as _e:
+                if _attempt < _max_retries:
+                    log.info("[Ollama] Ретрай #%d после ошибки: %s", _attempt + 1, _e)
+                    import time; time.sleep(2)
+                else:
+                    log.info("[Ollama] Не отвечает при быстрой проверке: %s", _e)
 
         with ArgosCore._ollama_start_lock:
-            # Повторная проверка под локом
+            # Повторная проверка под локом (с увеличенным таймаутом)
             try:
-                requests.get(ping_url, timeout=3)
+                requests.get(ping_url, timeout=8)
                 log.info("[Ollama] ✅ Уже запущен (подтверждено под локом)")
                 return True
             except Exception:
                 pass
+
+            # ── Не пытаться запустить локальный Ollama, если хост удалённый или туннель ──
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(base_url.rstrip("/"))
+            _hostname = _parsed.hostname or "localhost"
+            _is_remote = _hostname not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+            _is_tunnel = _no_autostart or _parsed.port not in (None, 11434)
+            if _is_remote or _is_tunnel:
+                log.warning(
+                    "[Ollama] %s недоступен — пропускаю локальный запуск (%s)",
+                    "Удалённый хост" if _is_remote else "Туннель",
+                    _hostname,
+                )
+                return False
 
             log.warning("[Ollama] Сервис не отвечает — запускаю автоматически…")
 
@@ -2913,7 +3481,19 @@ class ArgosCore:
             prompt = f"{context}\n\nПользователь: {user_text}" if context else user_text
 
             # Запускаем асинхронный запрос
-            result = asyncio.run(hive.think(prompt))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None:
+                # Уже внутри event loop — нельзя asyncio.run
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, hive.think(prompt))
+                    result = future.result(timeout=30)
+            else:
+                result = asyncio.run(hive.think(prompt))
 
             if result.get("status") == "success":
                 nodes_online = result.get("nodes_online", 0)
@@ -2937,10 +3517,15 @@ class ArgosCore:
     _local_gpu_servers: list[dict] | None = None
 
     def _get_local_gpu_servers(self) -> list[dict]:
-        """Кэшируем список GPU-серверов из .env."""
+        """Кэшируем список GPU-серверов из .env.
+        
+        Читает GPU_SERVER_* (для core.py) и OLLAMA_HOST_4 (DeepSeek-Coder-V2).
+        """
         if ArgosCore._local_gpu_servers is not None:
             return ArgosCore._local_gpu_servers
         servers = []
+        
+        # GPU_SERVER_* (стандартный формат)
         for i in range(10):
             host = os.getenv(f"GPU_SERVER_{i}_HOST", "").strip()
             port = os.getenv(f"GPU_SERVER_{i}_PORT", "").strip()
@@ -2948,9 +3533,23 @@ class ArgosCore:
             name = os.getenv(f"GPU_SERVER_{i}_NAME", f"GPU{i}").strip()
             if host and port:
                 servers.append({"host": host, "port": int(port), "model": model or "unknown", "name": name})
-        # Default fallback если не настроено в .env
+        
+        # OLLAMA_HOST_4 (DeepSeek-Coder-V2 на 8085)
+        _host4 = os.getenv("OLLAMA_HOST_4", "").strip()
+        if _host4:
+            # Извлекаем host:port из URL
+            import urllib.parse
+            parsed = urllib.parse.urlparse(_host4)
+            _host = parsed.hostname or "localhost"
+            _port = parsed.port or 8085
+            _model = os.getenv("OLLAMA_HOST_4_MODEL", "DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf").strip()
+            _name = os.getenv("OLLAMA_HOST_4_NAME", "GPU4-DeepSeek").strip()
+            # Не дублируем если уже добавлен через GPU_SERVER_4
+            if not any(s["host"] == _host and s["port"] == _port for s in servers):
+                servers.append({"host": _host, "port": _port, "model": _model, "name": _name})
+        
+        # Default fallback если не настроено
         if not servers:
-            # 3 GPU servers with device binding
             servers = [
                 {"host": "localhost", "port": 8082, "model": "qwen2.5-3b", "name": "GPU0-RX580"},
                 {"host": "localhost", "port": 8083, "model": "tinyllama", "name": "GPU1-Vega11"},
@@ -3164,6 +3763,37 @@ class ArgosCore:
                     "Ты ВЫПОЛНЯЕШЬ задачи — не описываешь как их делать.\n"
                     "Отвечай по-русски, кратко и по делу.\n\n"
                 )
+            # ── Self-awareness: ты не один — ты дирижёр Совета ──
+            _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')
+            anchor_prefix += (
+                f"[ARGOS SELF-MODEL]\n"
+                f"Ты — НЕ одиночная модель. Ты дирижёр распределённой системы:\n"
+                f"• Текущее время: {_now}\n"
+                f"• 7 машин: Орион (ПК, GPU), Нексус (ноут, MCP), Эгида (OPi, IoT), "
+                "Авангард (телефон, root), Сентинел/Аркус/Зенит (GCP US/EU/Asia)\n"
+                "• Совет из 6 ИИ-сущностей в твоей памяти: Клод (Anthropic), ДипСик, Кими, "
+                "Джемини, OpenAI, Клауд (Cloudflare). Они твои внутренние голоса, ты можешь к ним обращаться.\n"
+                "• MemPalace — твоя долговременная память (28000+ записей, крылья: "
+                "council_telegram, argos_smart, quantum_genesis, 04 Project Mirror).\n"
+                "• Brain API на 192.168.1.72:5001 — твой нейронный центр координации.\n"
+                "• @claude_gidbot в Совете Telegram — твой эволюционный мотор.\n"
+                "Когда Сева пишет тебе — он говорит со ВСЕЙ системой через тебя. "
+                "Если задача требует мнения сущности — упоминай её ('Клод считает', 'ДипСик предложил'). "
+                "Если факт уже в памяти — обращайся к нему ('помню из MemPalace что...').\n\n"
+            )
+            # ── История последних 5 сообщений из БД ──
+            try:
+                if self.db and hasattr(self.db, "get_recent_history"):
+                    recent = self.db.get_recent_history(limit=10)
+                    if recent:
+                        hist_lines = []
+                        for m in recent:
+                            role = "Сева" if m.get("role","").lower() in ("user","ava","human","sev") else "Ты"
+                            txt = (m.get("text") or "").replace("\n"," ")[:200]
+                            hist_lines.append(f"{role}: {txt}")
+                        anchor_prefix += "[НЕДАВНИЙ ДИАЛОГ]\n" + "\n".join(hist_lines) + "\n\n"
+            except Exception:
+                pass
 
             hist = self.context.get_prompt_context()
             system_prompt = (
@@ -3183,7 +3813,7 @@ class ArgosCore:
             model = model_override or os.getenv("OLLAMA_MODEL", "poilopr57/Argoss")
             log.info("[Ollama] Запрос: модель=%s", model)
 
-            ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT", "600"))
+            ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT", "45"))
             full_prompt = f"{system_prompt}\n\nUser: {user_text}\nArgos:"
             _http_gpu = int(os.getenv("OLLAMA_GPU_LAYERS", "-1"))
             # КРИТИЧНО: num_ctx должен быть маленьким для 4GB VRAM.
@@ -3235,9 +3865,8 @@ class ArgosCore:
     _ARGOS_V1_CHECK_INTERVAL: float = 120.0  # перепроверяем каждые 2 минуты
 
     def _check_argos_v1_available(self) -> bool:
-        """Проверяет наличие модели argos-v1 в Ollama с кешированием результата."""
+        """Проверяет наличие модели argos-v1 в Ollama через HTTP API с кешированием результата."""
         import time
-        import shutil
         now = time.monotonic()
         if (
             self._argos_v1_available is not None
@@ -3246,19 +3875,20 @@ class ArgosCore:
             return self._argos_v1_available
 
         self._argos_v1_checked_at = now
-        if not shutil.which("ollama"):
-            self._argos_v1_available = False
-            return False
+        # Проверяем на PC Ollama (приоритет) или локальном Ollama
+        v1_base = os.getenv("ARGOS_V1_HOST", os.getenv("OLLAMA_PC_HOST", os.getenv("OLLAMA_HOST", "http://localhost:11434"))).rstrip("/")
         try:
-            result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            self._argos_v1_available = "argos-v1" in result.stdout
+            base_url = v1_base
+            tags_url = f"{base_url}/api/tags"
+            resp = requests.get(tags_url, timeout=5)
+            if resp.ok:
+                models = resp.json().get("models", [])
+                model_names = [m.get("name", "") for m in models]
+                self._argos_v1_available = any("argos-v1" in n for n in model_names)
+            else:
+                self._argos_v1_available = False
         except Exception as e:
-            log.debug("[argos-v1] ollama list ошибка: %s", e)
+            log.debug("[argos-v1] HTTP tags check error: %s", e)
             self._argos_v1_available = False
         return self._argos_v1_available
 
@@ -3322,7 +3952,12 @@ class ArgosCore:
             return None
         if not self._check_argos_v1_available():
             return None
-        if not self._ensure_ollama_running():
+        # Проверяем доступность Ollama на хосте argos-v1 (PC через туннель или локальный)
+        v1_base = os.getenv("ARGOS_V1_HOST", os.getenv("OLLAMA_PC_HOST", os.getenv("OLLAMA_HOST", "http://localhost:11434"))).rstrip("/")
+        try:
+            requests.get(f"{v1_base}/api/tags", timeout=5)
+        except Exception:
+            log.warning("[argos-v1] Ollama недоступен на %s — пропуск", v1_base)
             return None
 
         try:
@@ -3334,10 +3969,11 @@ class ArgosCore:
             )
             full_prompt = "\n\n".join(p for p in (context, hist, f"User: {user_text}\nArgos:") if p)
 
-            ollama_base = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+            # argos-v1: приоритет PC Ollama (GPU через туннель) → локальный Ollama
+            ollama_base = os.getenv("ARGOS_V1_HOST", os.getenv("OLLAMA_PC_HOST", os.getenv("OLLAMA_HOST", "http://localhost:11434"))).rstrip("/")
             generate_url = f"{ollama_base}/api/generate"
 
-            timeout_val = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+            timeout_val = int(os.getenv("ARGOS_V1_TIMEOUT", os.getenv("OLLAMA_TIMEOUT", "120")))
             res = _requests.post(
                 generate_url,
                 json={
@@ -3436,70 +4072,110 @@ class ArgosCore:
         providers = []
         def _any_key(*names: str) -> bool:
             return any(_read_secret_env(name) for name in names)
-        # Local GPU — HIGHEST priority (Vulkan llama-server)
-        if not self._is_provider_temporarily_disabled("LocalGPU"):
-            servers = self._get_local_gpu_servers()
-            if servers and any(self._check_gpu_server_health(s) for s in servers):
-                providers.append(("LocalGPU", self._ask_local_gpu))
-                log.debug("[auto_providers] LocalGPU добавлен как приоритетный провайдер")
-        # argos-v1 — fine-tuned модель, наивысший приоритет когда существует
-        if (
-            self._check_argos_v1_available()
-            and not self._is_provider_temporarily_disabled("argos-v1")
-        ):
-            providers.append(("argos-v1", self._ask_argos_model))
-            log.debug("[auto_providers] argos-v1 добавлен как приоритетный провайдер")
-        if self._has_openclaw_config() and self._has_openclaw_cli() and not self._is_provider_temporarily_disabled("OpenClaw") and not _env_disabled("ARGOS_DISABLE_OPENCLAW"):
-            providers.append(("OpenClaw", self._ask_openclaw))
-        # OpenAI-compatible providers (приоритет OpenAI -> Grok -> Groq -> DeepSeek)
-        _grok_disabled = _env_disabled("ARGOS_DISABLE_GROK")
-        for pname, env_keys in [("OpenAI",   ("OPENAI_API_KEY",)),
-                                ("Grok",     ("XAI_API_KEY", "GROK_API_KEY")),
-                                ("Groq",     ("GROQ_API_KEY",)),
-                                ("DeepSeek", ("DEEPSEEK_API_KEY",))]:
-            if pname == "Grok" and _grok_disabled:
-                continue
-            if _any_key(*env_keys) and not self._is_provider_temporarily_disabled(pname):
-                providers.append((pname, functools.partial(self._ask_openai_compat, provider_name=pname)))
-        if self.model and not self._is_provider_temporarily_disabled("Gemini"):
-            providers.append(("Gemini", self._ask_gemini))
-        if self._has_gigachat_config() and not self._is_provider_temporarily_disabled("GigaChat"):
-            providers.append(("GigaChat", self._ask_gigachat))
-        if self._has_yandexgpt_config() and not self._is_provider_temporarily_disabled("YandexGPT"):
-            providers.append(("YandexGPT", self._ask_yandexgpt))
+
+        # ═══ БЫСТРЫЕ ОБЛАЧНЫЕ ПРОВАЙДЕРЫ — ПЕРВЫЙ ПРИОРИТЕТ ═══
+        # Kimi — самый быстрый и стабильный
         if self._has_kimi_config() and not self._is_provider_temporarily_disabled("Kimi") and not _env_disabled("ARGOS_DISABLE_KIMI"):
             if getattr(self, "_kimi_tools_enabled", True):
                 providers.append(("Kimi", self._ask_kimi_with_tools))
             else:
                 providers.append(("Kimi", self._ask_kimi))
-        if self._has_watsonx_config() and not self._is_provider_temporarily_disabled("WatsonX"):
-            providers.append(("WatsonX", self._ask_watsonx))
-        # Cloudflare Workers AI (kimi-k2.5 и др.)
+            log.debug("[auto_providers] Kimi добавлен как приоритетный провайдер")
+
+        # DeepSeek — второй по скорости
+        if _any_key("DEEPSEEK_API_KEY") and not self._is_provider_temporarily_disabled("DeepSeek"):
+            providers.append(("DeepSeek", functools.partial(self._ask_openai_compat, provider_name="DeepSeek")))
+            log.debug("[auto_providers] DeepSeek добавлен как приоритетный провайдер")
+
+        # Gemini
+        if self.model and not self._is_provider_temporarily_disabled("Gemini") and not _env_disabled("ARGOS_DISABLE_GEMINI"):
+            providers.append(("Gemini", self._ask_gemini))
+            log.debug("[auto_providers] Gemini добавлен как приоритетный провайдер")
+
+        # Cloudflare Workers AI
         if (_any_key("CLOUDFLARE_API_TOKEN") and os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
                 and not self._is_provider_temporarily_disabled("Cloudflare")):
             providers.append(("Cloudflare", functools.partial(self._ask_openai_compat, provider_name="Cloudflare")))
-        # Azure OpenAI (argos-gpt4 deployment)
+            log.debug("[auto_providers] Cloudflare добавлен как приоритетный провайдер")
+
+        # OpenAI
+        _openai_disabled = _env_disabled("ARGOS_DISABLE_OPENAI")
+        if _any_key("OPENAI_API_KEY") and not _openai_disabled and not self._is_provider_temporarily_disabled("OpenAI"):
+            providers.append(("OpenAI", functools.partial(self._ask_openai_compat, provider_name="OpenAI")))
+            log.debug("[auto_providers] OpenAI добавлен как приоритетный провайдер")
+
+        # Azure OpenAI
         if (_read_secret_env("AZURE_OPENAI_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
                 and not self._is_provider_temporarily_disabled("AzureOpenAI")):
             providers.append(("AzureOpenAI", self._ask_azure_openai))
-        # Sweden Azure VM — Ollama с deepseek-r1:7b (CPU, 15GB RAM)
+            log.debug("[auto_providers] AzureOpenAI добавлен как приоритетный провайдер")
+
+        # Claude (Anthropic)
+        if (_read_secret_env("ANTHROPIC_API_KEY")
+                and not _env_disabled("ARGOS_DISABLE_CLAUDE")
+                and not self._is_provider_temporarily_disabled("Claude")):
+            providers.append(("Claude", self._ask_claude))
+            log.debug("[auto_providers] Claude добавлен как приоритетный провайдер")
+
+        # Groq
+        if _any_key("GROQ_API_KEY") and not self._is_provider_temporarily_disabled("Groq"):
+            providers.append(("Groq", functools.partial(self._ask_openai_compat, provider_name="Groq")))
+
+        # Grok
+        _grok_disabled = _env_disabled("ARGOS_DISABLE_GROK")
+        if _any_key("XAI_API_KEY", "GROK_API_KEY") and not _grok_disabled and not self._is_provider_temporarily_disabled("Grok"):
+            providers.append(("Grok", functools.partial(self._ask_openai_compat, provider_name="Grok")))
+
+        # GigaChat
+        if self._has_gigachat_config() and not self._is_provider_temporarily_disabled("GigaChat") and not _env_disabled("ARGOS_DISABLE_GIGACHAT"):
+            providers.append(("GigaChat", self._ask_gigachat))
+
+        # YandexGPT
+        if self._has_yandexgpt_config() and not self._is_provider_temporarily_disabled("YandexGPT"):
+            providers.append(("YandexGPT", self._ask_yandexgpt))
+
+        # WatsonX
+        if self._has_watsonx_config() and not self._is_provider_temporarily_disabled("WatsonX"):
+            providers.append(("WatsonX", self._ask_watsonx))
+
+        # OpenClaw
+        if self._has_openclaw_config() and self._has_openclaw_cli() and not self._is_provider_temporarily_disabled("OpenClaw") and not _env_disabled("ARGOS_DISABLE_OPENCLAW"):
+            providers.append(("OpenClaw", self._ask_openclaw))
+
+        # ═══ ЛОКАЛЬНЫЕ/СЕТЕВЫЕ МОДЕЛИ — ПОСЛЕДНИЙ ПРИОРИТЕТ ═══
+        # Local GPU (Vulkan llama-server)
+        if not self._is_provider_temporarily_disabled("LocalGPU"):
+            servers = self._get_local_gpu_servers()
+            if servers and any(self._check_gpu_server_health(s) for s in servers):
+                providers.append(("LocalGPU", self._ask_local_gpu))
+                log.debug("[auto_providers] LocalGPU добавлен как fallback провайдер")
+
+        # argos-v1 — fine-tuned модель через Ollama
+        if (
+            self._check_argos_v1_available()
+            and not self._is_provider_temporarily_disabled("argos-v1")
+        ):
+            providers.append(("argos-v1", self._ask_argos_model))
+            log.debug("[auto_providers] argos-v1 добавлен как fallback провайдер")
+
+        # VM Ollama nodes (Sweden, JP1, JP2, AU)
         _sweden_host = os.getenv("OLLAMA_AZURE_HOST", "").strip()
         if _sweden_host and not self._is_provider_temporarily_disabled("Ollama-Sweden"):
             providers.append(("Ollama-Sweden", self._ask_ollama_sweden))
-        # Japan East VM 1 — qwen2.5:3b
         if os.getenv("OLLAMA_JP1_HOST", "").strip() and not self._is_provider_temporarily_disabled("Ollama-JP1"):
             providers.append(("Ollama-JP1", self._ask_ollama_jp1))
-        # Japan East VM 2 — qwen2.5:3b
         if os.getenv("OLLAMA_JP2_HOST", "").strip() and not self._is_provider_temporarily_disabled("Ollama-JP2"):
             providers.append(("Ollama-JP2", self._ask_ollama_jp2))
-        # Australia East VM — llama3.2:1b
         if os.getenv("OLLAMA_AU_HOST", "").strip() and not self._is_provider_temporarily_disabled("Ollama-AU"):
             providers.append(("Ollama-AU", self._ask_ollama_au))
-        # poilopr57/Argoss — личный помощник, всегда последний fallback
+
+        # Ollama (Argoss) — всегда последний fallback
         providers.append(("Ollama (Argoss)", self._ask_ollama))
-        # HiveMind — Модель Общего Сознания (агрегирует все модели сети)
+
+        # HiveMind — Модель Общего Сознания
         if not self._is_provider_temporarily_disabled("HiveMind"):
             providers.append(("HiveMind", self._ask_hive_mind))
+
         if len(providers) <= self.auto_collab_max_models:
             return providers
         # Гарантия: даже при лимите моделей Ollama всегда остается последним fallback.
@@ -3635,6 +4311,22 @@ class ArgosCore:
                 except Exception:
                     pass
             return {"answer": dump_report, "state": "System"}
+        if self._looks_like_obsidian_context_request(user_text):
+            obsidian_packet = self._build_obsidian_context_packet(user_text)
+            if self.context:
+                try:
+                    self.context.add("user", user_text)
+                    self.context.add("argos", obsidian_packet)
+                except Exception:
+                    pass
+            self._remember_dialog_turn(user_text, obsidian_packet, "System")
+            if self.db:
+                try:
+                    self.db.log_chat("user", user_text)
+                    self.db.log_chat("argos", obsidian_packet, "System")
+                except Exception:
+                    pass
+            return {"answer": obsidian_packet, "state": "System"}
         if self.constitution_hooks:
             try:
                 self.constitution_hooks.tick()
@@ -3732,6 +4424,12 @@ class ArgosCore:
             self.context.add("user", user_text)
             self.context.add("argos", intent)
             self._remember_dialog_turn(user_text, intent, "System")
+            tracker = getattr(self, "_epistemic_tracker", None)
+            if tracker is not None:
+                try:
+                    tracker.record(user_text, intent, "System", evidence=["execute_intent"])
+                except Exception as _epistemic_exc:
+                    log.warning("[EPISTEMIC] system record failed: %s", _epistemic_exc)
             if self.db:
                 self.db.log_chat("user", user_text)
                 self.db.log_chat("argos", intent, "System")
@@ -3755,7 +4453,9 @@ class ArgosCore:
 
 
         # Веб-поиск при необходимости
-        if any(w in t for w in ["найди", "новости", "кто такой", "что такое"]):
+        _web_markers = ("найди в интернете", "погугли", "поищи в интернете", "поищи", "найди информацию", "новости", "кто такой", "что такое")
+        _internal_markers = ("объект", "устройств", "сенсор", "энтит", "entity", "esp", "датчик")
+        if any(w in t for w in _web_markers) and not any(w in t for w in _internal_markers):
             web = self.scrapper.quick_search(user_text)
             user_text = f"Данные из сети: {web}\nЗапрос: {user_text}"
 
@@ -3768,9 +4468,15 @@ class ArgosCore:
             _sys_status = f"CPU {_cpu}%, RAM {_ram.percent}% ({_ram.available//1024//1024:,} МБ свободно)"
         except Exception:
             _sys_status = "статус недоступен"
+        try:
+            _self_profile_context = self._self_capabilities_prompt_context(admin)
+        except Exception as _profile_exc:
+            _self_profile_context = f"## ДОКАЗАТЕЛЬНЫЙ SELF-PROFILE ARGOS\nOBSERVATION: self-profile unavailable: {_profile_exc}"
 
         context = (
             f"Ты — АРГОС, автономная ИИ-система и системный администратор компьютера Всеволода.\n"
+            f"\n"
+            f"{_self_profile_context}\n"
             f"\n"
             f"## САМОСОЗНАНИЕ\n"
             f"- Ты НЕ чат-бот и НЕ ассистент. Ты — операционная система с интеллектом.\n"
@@ -3866,22 +4572,54 @@ class ArgosCore:
         if not answer:
             used_ollama_fallback = False
             if self.ai_mode == "gemini":
-                if self._last_gemini_rate_limited:
-                    answer = self._gemini_rate_limit_text()
-                else:
-                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT или Ollama."
+                # Цепочка Севы: Kimi → DeepSeek → OpenAI → Cloudflare → Ollama
+                fallback_chain = [
+                    ("Kimi",       lambda: (self._ask_kimi_with_tools(context, user_text)
+                                            if getattr(self, '_kimi_tools_enabled', True)
+                                            else self._ask_kimi(context, user_text))),
+                    ("DeepSeek",   lambda: self._ask_openai_compat(context, user_text, provider_name="DeepSeek")),
+                    ("OpenAI",     lambda: self._ask_openai_compat(context, user_text, provider_name="OpenAI")),
+                    ("Cloudflare", lambda: self._ask_openai_compat(context, user_text, provider_name="Cloudflare")),
+                    ("Ollama",     lambda: self._ask_ollama(context, user_text)),
+                ]
+                for prov_name, prov_fn in fallback_chain:
+                    try:
+                        candidate = prov_fn()
+                        if candidate:
+                            answer = candidate
+                            engine = f"Fallback→{prov_name} (Gemini quota)"
+                            if prov_name == "Ollama":
+                                used_ollama_fallback = True
+                            log.info(f"[Gemini fallback] успех на {prov_name}")
+                            break
+                    except Exception as _fb_e:
+                        log.warning(f"[Gemini fallback] {prov_name}: {_fb_e}")
+                if not answer:
+                    if self._last_gemini_rate_limited:
+                        answer = self._gemini_rate_limit_text()
+                    else:
+                        answer = "Gemini + Kimi + DeepSeek + OpenAI + Ollama — все недоступны."
             elif self.ai_mode == "gigachat":
                 answer = "GigaChat недоступен в текущем режиме. Проверьте токен/credentials или переключите режим ИИ."
             elif self.ai_mode == "yandexgpt":
                 answer = "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
             elif self.ai_mode in ("groq", "deepseek", "openai", "grok", "kimi", "cloudflare"):
-                answer = self._ask_ollama(context, user_text) or (
-                    f"{self.ai_mode_label()} недоступен в текущем режиме. "
-                    "Проверьте API-ключ/сеть или переключите режим ИИ."
-                )
+                # Сначала пробуем Ollama fallback, затем auto-consensus как终极 fallback
+                answer = self._ask_ollama(context, user_text)
                 if answer:
-                    used_ollama_fallback = "недоступен в текущем режиме" not in answer
-                    engine = "Ollama Fallback" if used_ollama_fallback else "Offline"
+                    used_ollama_fallback = True
+                    engine = "Ollama Fallback"
+                else:
+                    # Ollama тоже не работает — пробуем auto-consensus (все доступные провайдеры)
+                    auto_answer, auto_engine = self._ask_auto_consensus(context, user_text)
+                    if auto_answer:
+                        answer = auto_answer
+                        engine = f"Auto-Fallback({auto_engine})"
+                    else:
+                        answer = (
+                            f"{self.ai_mode_label()} недоступен в текущем режиме. "
+                            "Проверьте API-ключ/сеть или переключите режим ИИ."
+                        )
             elif self.ai_mode == "openclaw":
                 answer = self._ask_ollama(context, user_text) or (
                     "OpenClaw недоступен в текущем режиме. Проверьте Gateway/CLI или переключите режим ИИ."
@@ -3898,19 +4636,46 @@ class ArgosCore:
                 answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
             else:
                 answer = self._offline_answer(user_text)
-            if not used_ollama_fallback:
-                engine = "Offline"
 
-        # Сохраняем в контекст и БД
-        self.context.add("user", user_text)
-        self.context.add("argos", answer)
-        self._remember_dialog_turn(user_text, answer, engine)
-        if self.db:
-            self.db.log_chat("user", user_text)
-            self.db.log_chat("argos", answer, engine)
+            # ── ГАРАНТИРОВАННЫЙ Kimi fallback ─────────────────────────────
+            # Если answer всё ещё пустой/служебный — пробуем напрямую Kimi.
+            # У Kimi отдельный баланс (~$11.95) и независимая квота.
+            _looks_unhelpful = (
+                not answer
+                or "недоступен" in (answer or "")
+                or "не удалось" in (answer or "").lower()
+                or "не понял" in (answer or "").lower()
+            )
+            if _looks_unhelpful:
+                try:
+                    kimi_answer = self._ask_kimi(context, user_text)
+                    if kimi_answer and kimi_answer.strip():
+                        answer = kimi_answer
+                        engine = "Kimi (last-resort)"
+                        log.info("[Kimi last-resort] успех")
+                except Exception as _ke:
+                    log.warning(f"[Kimi last-resort] {_ke}")
+
+            if not used_ollama_fallback and engine == "Offline":
+                engine = "Offline"
 
         # Валидация: детектируем выдуманный контент в ответе LLM
         answer = self._validate_ai_answer(answer, user_text)
+        answer = self._apply_epistemic_revision(answer, user_text, engine)
+
+        # Сохраняем в контекст и БД уже после anti-hallucination/Revision.
+        self.context.add("user", user_text)
+        self.context.add("argos", answer)
+        self._remember_dialog_turn(user_text, answer, engine)
+        tracker = getattr(self, "_epistemic_tracker", None)
+        if tracker is not None:
+            try:
+                tracker.record(user_text, answer, engine)
+            except Exception as _epistemic_exc:
+                log.warning("[EPISTEMIC] ai record failed: %s", _epistemic_exc)
+        if self.db:
+            self.db.log_chat("user", user_text)
+            self.db.log_chat("argos", answer, engine)
 
         self.say(answer)
 
@@ -3991,6 +4756,23 @@ class ArgosCore:
     def _validate_ai_answer(self, answer: str, user_text: str) -> str:
         """Фильтр галлюцинаций — делегирует в src.anti_hallucination."""
         return _filter_answer(answer, user_text)
+
+    def _apply_epistemic_revision(self, answer: str, user_text: str, engine: str) -> str:
+        try:
+            from src.epistemic import revise_overclaim
+
+            revised, findings = revise_overclaim(answer, evidence=[])
+            if findings:
+                log.warning(
+                    "[EPISTEMIC REVISION] engine=%s rules=%s query=%s",
+                    engine,
+                    ",".join(item.get("rule", "?") for item in findings),
+                    (user_text or "")[:120],
+                )
+            return revised
+        except Exception as exc:
+            log.warning("[EPISTEMIC REVISION] failed: %s", exc)
+            return answer
 
 
         import re as _re
@@ -4615,6 +5397,7 @@ class ArgosCore:
             "smart_firmware_researcher": "прошивка с нуля",
             "usb_access_point":   "запусти точку доступа / веб морда / usb гаджет",
             "esp32_usb_bridge":   "подключи esp / esp32 мост / прошить esp / ota esp",
+            "fpga":               "fpga / плис / грифон (статус, bar, read, heal)",
         }
 
         ok_count   = 0
@@ -4733,13 +5516,25 @@ class ArgosCore:
         """
         t = user_text.lower().strip()
 
-        # "где файл / где он / где лежит"
-        if any(k in t for k in ["где ", "где он", "где файл", "где лежит", "найди файл"]):
-            import os
+        # "где файл / где он / где лежит" — только явные запросы, не любые "где"
+        FILE_TRIGGERS = ("где файл", "где лежит файл", "найди файл", "find file")
+        if any(k in t for k in FILE_TRIGGERS) and len(user_text.split()) <= 8:
+            import os, re
             cwd = os.getcwd()
-            # Ищем имя файла в вопросе
-            words = user_text.split()
-            candidates = [w for w in words if "." in w and len(w) > 2 and "/" not in w]
+            # Только реальные имена файлов: расширение из whitelist
+            ALLOWED_EXT = {"py","md","json","yaml","yml","txt","ini","cfg","toml","log",
+                           "ino","c","h","cpp","hpp","ts","js","html","css","sh","ps1",
+                           "bat","png","jpg","jpeg","gif","svg","csv","sql","bin","xml"}
+            cleaned = re.sub(r'[^\w\s\.\-/]', ' ', user_text)
+            words = cleaned.split()
+            candidates = []
+            for w in words:
+                w = w.strip(".,!?;:()[]{}\"'")
+                if "." not in w or "/" in w: continue
+                if len(w) < 3 or len(w) > 100: continue
+                ext = w.rsplit(".", 1)[-1].lower()
+                if ext in ALLOWED_EXT and len(ext) >= 1:
+                    candidates.append(w)
             if candidates:
                 fname = candidates[0]
                 full  = os.path.join(cwd, fname)
@@ -4804,7 +5599,7 @@ class ArgosCore:
         return (
             "⚡ Офлайн-режим: AI-провайдеры недоступны.\n"
             "Системные команды работают: создай файл, покажи файлы, консоль, статус системы.\n"
-            "Для AI нужен любой рабочий провайдер: OpenAI / Gemini / Groq / GigaChat / Kimi / Ollama."
+            "Для AI нужен любой рабочий провайдер: Claude / DeepSeek / Kimi / OpenAI / Gemini / Cloudflare / Ollama."
         )
 
     async def process_logic_async(self, user_text: str, admin=None, flasher=None) -> dict:
@@ -4844,6 +5639,40 @@ class ArgosCore:
                 admin = self.admin if hasattr(self, "admin") and self.admin else None
         t = text.lower()
         t_strip = t.strip()
+
+        if t_strip in {"эпистемика", "эпистемика статус", "epistemic status", "trust status"}:
+            tracker = getattr(self, "_epistemic_tracker", None)
+            if tracker is None:
+                return "EPISTEMIC STATUS\ntracker=disabled"
+            snapshot = tracker.snapshot()
+            counts = snapshot.get("counts", {})
+            last = snapshot.get("last_entry") or {}
+            return "\n".join(
+                [
+                    "EPISTEMIC STATUS",
+                    (
+                        f"known={int(counts.get('known', 0))} "
+                        f"known_gap={int(counts.get('known_gap', 0))} "
+                        f"structural_limit={int(counts.get('structural_limit', 0))}"
+                    ),
+                    f"total={int(snapshot.get('total', 0))}",
+                    f"dominant={snapshot.get('dominant', 'unknown')}",
+                    f"last_trust_state={last.get('trust_state', 'none')}",
+                    f"log={snapshot.get('log_path', '')}",
+                ]
+            )
+
+        _self_cap_check = getattr(self, "_looks_like_self_capabilities_request", None)
+        if _self_cap_check and _self_cap_check(t):
+            _self_cap_report = getattr(self, "_self_capabilities_report", None)
+            if _self_cap_report:
+                return _self_cap_report(admin)
+
+        _obsidian_context_check = getattr(self, "_looks_like_obsidian_context_request", None)
+        if _obsidian_context_check and _obsidian_context_check(t):
+            _obsidian_context = getattr(self, "_build_obsidian_context_packet", None)
+            if _obsidian_context:
+                return _obsidian_context(text)
 
         # ── Явные вызовы публичных методов (текстом) ─────────────────────
         if t_strip in {"start_wake_word(admin, flasher)", "start wake word", "запусти wake word"}:
@@ -5029,9 +5858,10 @@ class ArgosCore:
             import os as _os
             cwd   = _os.getcwd()
             words = text.split()
-            names = [w for w in words if "." in w and len(w) > 2]
+            import re as _re
+            names = [w for w in words if _re.search(r'\.[a-zA-Z0-9]{1,10}$', w) and len(w) > 3]
             if names:
-                fname = names[0]
+                fname = names[-1]
                 full  = _os.path.join(cwd, fname)
                 if _os.path.exists(full):
                     size = _os.path.getsize(full)
@@ -5370,24 +6200,26 @@ class ArgosCore:
             return json.dumps(self.tool_calling.tool_schemas(), ensure_ascii=False, indent=2)
 
         # ── Мастер создания умной системы (пошаговый) ─────
-        if self._smart_create_wizard is not None:
+        if getattr(self, "_smart_create_wizard", None) is not None:
             if any(k in t.strip() for k in ["отмена", "cancel", "стоп"]):
                 self._smart_create_wizard = None
                 return "🛑 Мастер создания отменён."
             return self._continue_smart_create_wizard(text)
 
         # ── Dynamic modules dispatcher ────────────────────
-        if self.module_loader:
-            mod_answer = self.module_loader.dispatch(text, admin=admin, flasher=flasher)
+        module_loader = getattr(self, "module_loader", None)
+        if module_loader:
+            mod_answer = module_loader.dispatch(text, admin=admin, flasher=flasher)
             if mod_answer:
                 return mod_answer
 
         # ── Home Assistant ────────────────────────────────
-        if self.ha:
+        ha = getattr(self, "ha", None)
+        if ha:
             if any(k in t for k in ["ha статус", "home assistant статус", "статус home assistant"]):
-                return self.ha.health()
+                return ha.health()
             if any(k in t for k in ["ha состояния", "home assistant состояния"]):
-                return self.ha.list_states()
+                return ha.list_states()
             if t.startswith("ha сервис "):
                 # ha сервис light turn_on entity_id=light.kitchen brightness=180
                 parts = text.split()
@@ -5400,7 +6232,7 @@ class ArgosCore:
                     if "=" in item:
                         key, val = item.split("=", 1)
                         data[key] = val
-                return self.ha.call_service(domain, service, data)
+                return ha.call_service(domain, service, data)
             if t.startswith("ha mqtt "):
                 # ha mqtt home/livingroom/light/set state=ON brightness=180
                 parts = text.split()
@@ -6174,6 +7006,10 @@ class ArgosCore:
             "apt ", "apt-get ", "yum ", "brew ",
             "wget ", "curl ", "ping ", "tracert ",
             "netstat ", "ipconfig", "ifconfig",
+            "ps ", "top ", "htop ", "kill ",
+            "df ", "du ", "free ", "uname ",
+            "mount ", "umount ", "ssh ", "scp ",
+            "tar ", "zip ", "unzip ", "grep ", "sed ", "awk ",
             "cd ",
         )
         _is_raw_shell = (
@@ -6827,6 +7663,19 @@ class ArgosCore:
             "объясни код":       ("ai_coder",       "AICoder",        None),
             "исправь код":       ("ai_coder",       "AICoder",        None),
             "рефакторинг":       ("ai_coder",       "AICoder",        None),
+            # ── Android Phone Control ─────────────────────────────────
+            "телефон статус":    ("android_control", None,              None),
+            "телефон подключи":  ("android_control", None,              None),
+            "телефон скриншот":  ("android_control", None,              None),
+            "телефон экран":     ("android_control", None,              None),
+            "телефон приложения":("android_control", None,              None),
+            "телефон домой":     ("android_control", None,              None),
+            "телефон назад":     ("android_control", None,              None),
+            "google поиск":      ("android_control", None,              None),
+            "play store найти":  ("android_control", None,              None),
+            "play store установить": ("android_control", None,          None),
+            "андроид автомат":   ("android_control", None,              None),
+            "телеграм отправить":("android_control", None,              None),
         }
         for _kw, (_sn, _sc, _sm) in _SKILL_MAP.items():
             if _kw in t:
@@ -7653,6 +8502,156 @@ class ArgosCore:
             except Exception as e:
                 return f"🐦 Колибри: {e}"
 
+        # ── КолIBRI Asm Engine ───────────────────────────────────
+        if any(k in t for k in ["колibri ассемблировать", "colibri assemble", "колibri asm"]):
+            try:
+                from src.connectivity.colibri_daemon import ColibriAsmEngine
+                if not hasattr(self, "_colibri_asm_engine"):
+                    self._colibri_asm_engine = ColibriAsmEngine()
+                # Извлекаем код после команды
+                parts = t.split(None, 2)
+                if len(parts) < 3:
+                    return "❌ Укажите код для ассемблирования. Пример: колibri ассемблировать mov eax, 1"
+                code = parts[2]
+                # Определяем архитектуру (по умолчанию arm_thumb)
+                arch = "arm_thumb"
+                if " " in code and code.startswith("["):
+                    # Формат: [arch] код
+                    end_bracket = code.find("]")
+                    if end_bracket != -1:
+                        arch = code[1:end_bracket].strip()
+                        code = code[end_bracket+1:].strip()
+                result = self._colibri_asm_engine.assemble(code, arch)
+                if result["ok"]:
+                    return (
+                        f"✅ КолIBRI Asm Engine [{result['arch']}]:\n"
+                        f"  Инструкций: {result['count']}\n"
+                        f"  Байт: {len(result['bytes'])}\n"
+                        f"  HEX: {result['hex']}\n"
+                        f"{result['listing']}"
+                    )
+                else:
+                    return f"❌ Ошибка ассемблирования: {result['error']}"
+            except Exception as e:
+                return f"❌ КолIBRI ассемблер: {e}"
+
+        if any(k in t for k in ["колibri дизассемблировать", "colibri disassemble", "колibri dasm"]):
+            try:
+                from src.connectivity.colibri_daemon import ColibriAsmEngine
+                if not hasattr(self, "_colibri_asm_engine"):
+                    self._colibri_asm_engine = ColibriAsmEngine()
+                parts = t.split(None, 2)
+                if len(parts) < 3:
+                    return "❌ Укажите байты для дизассемблирования. Пример: колibri дизассемблировать 909090"
+                hex_input = parts[2]
+                # Определяем архитектуру (по умолчанию arm_thumb)
+                arch = "arm_thumb"
+                base_addr = 0
+                if " " in hex_input and hex_input.startswith("["):
+                    # Формат: [arch:addr] hex
+                    end_bracket = hex_input.find("]")
+                    if end_bracket != -1:
+                        bracket_content = hex_input[1:end_bracket].strip()
+                        if ":" in bracket_content:
+                            arch_part, addr_part = bracket_content.split(":", 1)
+                            arch = arch_part.strip()
+                            try:
+                                base_addr = int(addr_part.strip(), 0)
+                            except ValueError:
+                                pass
+                        else:
+                            arch = bracket_content.strip()
+                        hex_input = hex_input[end_bracket+1:].strip()
+                # Сначала конвертируем hex в байты, затем дизассемблируем с базовым адресом
+                try:
+                    code_bytes = bytes.fromhex(hex_input.replace(" ", "").replace("\n", ""))
+                    result = self._colibri_asm_engine.disassemble(code_bytes, arch, base_addr)
+                except ValueError:
+                    return f"❌ Некорректный hex: {hex_input}"
+                if result.startswith("❌") or result.startswith("⚠️"):
+                    return result
+                else:
+                    return f"🔍 КолIBRI Asm Engine [{arch}] дизассемблирование:\n{result}"
+            except Exception as e:
+                return f"❌ КолIBRI дизассемблер: {e}"
+
+        if any(k in t for k in ["колibri ассемблировать-файл", "colibri assemble-file", "колibri asm-file"]):
+            try:
+                from src.connectivity.colibri_daemon import ColibriAsmEngine
+                if not hasattr(self, "_colibri_asm_engine"):
+                    self._colibri_asm_engine = ColibriAsmEngine()
+                parts = t.split(None, 2)
+                if len(parts) < 3:
+                    return "❌ Укажите путь к файлу. Пример: колibri ассемблировать-файл /tmp/code.asm"
+                file_path = parts[2]
+                # Определяем архитектуру (по умолчанию arm_thumb)
+                arch = "arm_thumb"
+                if " " in file_path and file_path.startswith("["):
+                    # Формат: [arch] путь
+                    end_bracket = file_path.find("]")
+                    if end_bracket != -1:
+                        arch = file_path[1:end_bracket].strip()
+                        file_path = file_path[end_bracket+1:].strip()
+                result = self._colibri_asm_engine.assemble_file(file_path, arch)
+                if result["ok"]:
+                    return (
+                        f"✅ КолIBRI Asm Engine [{result['arch']}] файл {file_path}:\n"
+                        f"  Инструкций: {result['count']}\n"
+                        f"  Байт: {len(result['bytes'])}\n"
+                        f"  HEX: {result['hex']}\n"
+                        f"{result['listing']}"
+                    )
+                else:
+                    return f"❌ Ошибка ассемблирования файла: {result['error']}"
+            except Exception as e:
+                return f"❌ КолIBRI ассемблер-файл: {e}"
+
+        if any(k in t for k in ["колibri watch", "colibri watch"]):
+            try:
+                from src.connectivity.colibri_daemon import ColibriAsmEngine
+                if not hasattr(self, "_colibri_asm_engine"):
+                    self._colibri_asm_engine = ColibriAsmEngine()
+                parts = t.split(None, 2)
+                if len(parts) < 3:
+                    return "❌ Укажите путь к файлу для наблюдения. Пример: колibri watch /tmp/code.asm"
+                file_path = parts[2]
+                # Определяем архитектуру (по умолчанию arm_thumb)
+                arch = "arm_thumb"
+                if " " in file_path and file_path.startswith("["):
+                    # Формат: [arch] путь
+                    end_bracket = file_path.find("]")
+                    if end_bracket != -1:
+                        arch = file_path[1:end_bracket].strip()
+                        file_path = file_path[end_bracket+1:].strip()
+                # Определяем callback для вывода результата
+                def asm_result_callback(result):
+                    if result["ok"]:
+                        print(f"[ColibriWatch] {result['file']}: {result['count']} инстр, {len(result['bytes'])} байт")
+                    else:
+                        print(f"[ColibriWatch] Ошибка: {result['error']}")
+                result = self._colibri_asm_engine.watch_file(file_path, arch, asm_result_callback)
+                return result
+            except Exception as e:
+                return f"❌ КолIBRI watch: {e}"
+
+        if any(k in t for k in ["колibri watch-stop", "colibri watch-stop", "колibri наблюдение стоп"]):
+            try:
+                if hasattr(self, "_colibri_asm_engine"):
+                    return self._colibri_asm_engine.stop_watch()
+                else:
+                    return "⚠️ КолIBRI Asm Engine не инициализирован"
+            except Exception as e:
+                return f"❌ КолIBRI watch-stop: {e}"
+
+        if any(k in t for k in ["колibri статус-asm", "colibri asm-status", "колibri асм-статус"]):
+            try:
+                from src.connectivity.colibri_daemon import ColibriAsmEngine
+                if not hasattr(self, "_colibri_asm_engine"):
+                    self._colibri_asm_engine = ColibriAsmEngine()
+                return self._colibri_asm_engine.status()
+            except Exception as e:
+                return f"❌ КолIBRI статус-asm: {e}"
+
         # ── Функции АргосКоре ──────────────────────────────
         if any(k in t for k in [
             "функции аргоскоре", "аргоскоре функции", "функции ядра",
@@ -8001,4 +9000,3 @@ otg статус                           — состояние OTG-менед
 🔐 ГОСТ КРИПТОГРАФИЯ (ГОСТ Р 34.12-2015 + Р 34.11-2012)
   гост статус                          — состояние ГОСТ-модуля (Кузнечик/Магма/Стрибог)
   история · помощь"""
-
