@@ -485,6 +485,45 @@ $out | ConvertTo-Json -Depth 6
                               "(GetLastError) — устройство/движок не отвечает.")
         return result
 
+    # XDMA control-BAR субмодули (XDMA PG195): идентификатор в offset 0x0 каждого.
+    _XDMA_SUBMODULES = [
+        ("H2C0",   0x0000), ("C2H0",   0x1000), ("IRQ",    0x2000),
+        ("Config", 0x3000), ("H2C_SGDMA", 0x4000), ("C2H_SGDMA", 0x5000),
+        ("SGDMA_common", 0x6000), ("MSIX", 0x8000),
+    ]
+
+    def bar_map(self) -> dict[str, Any]:
+        """Живая карта control-BAR: ID каждого XDMA-субмодуля + user-сигнатура.
+        Реальное чтение через драйвер, без моков."""
+        out: dict[str, Any] = {"available": False, "control": {}, "user": None,
+                               "note": ""}
+        base = self._xdma_base_path()
+        if not base:
+            out["note"] = "XDMA interface не зарегистрирован (драйвер не привязан)"
+            return out
+        out["available"] = True
+        for name, off in self._XDMA_SUBMODULES:
+            r = self.dma_read("control", off, 4)
+            if r and len(r) == 4:
+                val = int.from_bytes(r, "little")
+                out["control"][name] = {
+                    "offset": f"0x{off:04x}", "id": f"0x{val:08x}",
+                    "subsystem": f"0x{val >> 12:04x}",
+                    "version": val & 0xff,
+                }
+        u = self.dma_read("user", 0x0, 16)
+        if u:
+            out["user"] = {
+                "hex": u.hex(),
+                "ascii": u[:8].decode("ascii", "replace"),
+            }
+        ids = [v["id"] for v in out["control"].values()]
+        out["note"] = (f"{len(ids)} субмодулей прочитано; "
+                       + ("XDMA сигнатура 0x1fc0 ✓"
+                          if any(i.startswith("0x1fc") for i in ids)
+                          else "сигнатура не XDMA"))
+        return out
+
     def command(self, action: str = "status", arg: str = "") -> str:
         action = (action or "status").strip().lower()
         if action == "status":
@@ -499,4 +538,20 @@ $out | ConvertTo-Json -Depth 6
             return self.program_bitstream(arg, dry_run=True)
         if action in {"dma_test", "dma_probe", "dma"}:
             return json.dumps(self.dma_probe(), ensure_ascii=False, indent=2)
+        if action in {"bar_map", "barmap", "bar", "map"}:
+            return json.dumps(self.bar_map(), ensure_ascii=False, indent=2)
+        if action in {"dma_read", "read"}:
+            # arg формат: "node offset [len]", напр. "user 0 16" или "control 0x1000 4"
+            parts = (arg or "control 0 4").split()
+            node = parts[0] if parts else "control"
+            off = int(parts[1], 0) if len(parts) > 1 else 0
+            ln = int(parts[2], 0) if len(parts) > 2 else 4
+            raw = self.dma_read(node, off, ln)
+            return json.dumps({
+                "node": node, "offset": f"0x{off:x}", "length": ln,
+                "hex": raw.hex() if raw else None,
+                "le_u32": (f"0x{int.from_bytes(raw[:4],'little'):08x}"
+                           if raw and len(raw) >= 4 else None),
+                "ascii": (raw.decode("ascii", "replace") if raw else None),
+            }, ensure_ascii=False, indent=2)
         return f"Unknown xilinx_fpga action: {action}"
