@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import datetime
 import io
 import os
 import random
@@ -38,7 +39,7 @@ import requests
 from urllib.parse import urlparse
 from typing import Optional
 
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, Message, InputFile
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InputFile, Message
 from telegram.error import InvalidToken, TelegramError, TimedOut, NetworkError
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
@@ -573,6 +574,8 @@ ROLE_USER  = "user"
 ROLE_BOT   = "bot"
 ROLE_NONE  = None
 
+_TRUE_ENV = ("1", "true", "on", "yes", "да", "вкл")
+
 # Команды/интенты, запрещённые для роли USER
 _USER_BLOCKED_PREFIXES = (
     "консоль", "терминал", "выключи систему", "убей процесс",
@@ -580,6 +583,51 @@ _USER_BLOCKED_PREFIXES = (
     "установи автозапуск", "удали автозапуск",
     "роль доступа", "установи роль",
 )
+
+
+_COUNCIL_TEXT_MARKERS = (
+    "⚡ действие:",
+    "brain недоступ",
+    "brain:0/0",
+    "brain:❌",
+    "mcp:✅",
+    "mcp:❌",
+    "argos emergence",
+    "localgpu fallback",
+    "@claude_gidbot",
+    "💭 кими",
+    "💭 дипсик",
+    "💭 openai",
+    "💭 клауд",
+    "🧦 валенок",
+    "орион:✅",
+    "эгида:✅",
+    "нексус:✅",
+)
+
+_COUNCIL_SENDER_MARKERS = (
+    "kimi",
+    "deepseek",
+    "openai",
+    "cloudflare",
+    "claude",
+    "клауд",
+    "кими",
+    "дипсик",
+    "валенок",
+)
+
+
+def _env_bool(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in _TRUE_ENV
+
+
+def _brain_api_url() -> str:
+    return (
+        os.getenv("ARGOS_BRAIN_API_URL", "").strip()
+        or os.getenv("ARGOS_BRAIN_URL", "").strip()
+        or "http://127.0.0.1:5001"
+    ).rstrip("/")
 
 
 def _load_id_set(env_key: str) -> set[str]:
@@ -626,16 +674,27 @@ class ArgosTelegram:
         # Последняя ошибка Telegram для диагностики
         self._last_tg_error: str = ""
         self._last_tg_error_ts: float = 0.0
+        # Offline answers для таймаута
+        self._offline_phrases: list[str] = [
+            "⏱ Превышен лимит времени. Провайдеры не ответили за 30с.",
+            "⚡ Офлайн: все AI провайдеры недоступны. Попробуйте позже.",
+            "🔄 Система перегружена. Direct-команды (статус, помощь) работают.",
+        ]
 
         # ── Роли и авторизация ──
         self.admin_ids: set[str] = _load_id_set("ADMIN_IDS")
         self.user_ids:  set[str] = _load_id_set("USER_IDS")
         self.bot_ids:   set[str] = _load_id_set("BOT_IDS")
 
-        # Обратная совместимость: USER_ID (одиночный) → admin
+        # Обратная совместимость: USER_ID (одиночный или через запятую) → admin
         legacy = os.getenv("USER_ID", "").strip()
+        self.user_id = legacy
         if legacy:
-            self.admin_ids.add(legacy)
+            self.admin_ids.add(legacy.split(",")[0].strip())  # первый ID → admin (legacy)
+
+        # allowed_ids — из USER_ID env var (с поддержкой запятой)
+        _uid_str = os.getenv("USER_ID", "").strip()
+        self.allowed_ids: set[str] = {uid.strip() for uid in _uid_str.split(",") if uid.strip()}
 
         # ── Голосовой ответ ──
         self.voice_reply  = os.getenv("TG_VOICE_REPLY", "off").strip().lower() in ("1", "on", "yes", "true")
@@ -669,7 +728,13 @@ class ArgosTelegram:
             or os.getenv("HTTP_PROXY", "").strip()
             or None
         )
-
+        self.tg_webhook_url = os.getenv("TG_WEBHOOK_URL", "").strip() or None
+        self.tg_webhook_port = int(os.getenv("TG_WEBHOOK_PORT", "8001") or "8001")
+        self.tg_webhook_path = os.getenv("TG_WEBHOOK_PATH", "/telegram").strip() or "/telegram"
+        # Защита от старого Entity Council: боты могут обращаться к ARGOS
+        # только явно, иначе их свободный диалог не должен грузить ядро.
+        self.tg_ignore_bot_chatter = _env_bool("ARGOS_TG_IGNORE_BOT_CHATTER", "1")
+        self.tg_quarantine_council_noise = _env_bool("ARGOS_TG_QUARANTINE_COUNCIL_NOISE", "1")
 
     # ── АВТОРИЗАЦИЯ ───────────────────────────────────────────────────────────
 
@@ -683,9 +748,12 @@ class ArgosTelegram:
             return ROLE_ADMIN
         if uid in self.user_ids:
             return ROLE_USER
-        if uid in self.bot_ids or user.is_bot:
+        if uid in self.bot_ids or getattr(user, "is_bot", False):
             # Бот авторизован только если его ID в BOT_IDS
             return ROLE_BOT if uid in self.bot_ids else ROLE_NONE
+        # Проверяем allowed_ids (упрощённый режим авторизации через USER_ID)
+        if uid in getattr(self, "allowed_ids", set()):
+            return ROLE_USER
         return ROLE_NONE
 
     def _auth(self, update: Update) -> bool:
@@ -694,6 +762,74 @@ class ArgosTelegram:
 
     def _is_admin(self, update: Update) -> bool:
         return self._get_role(update) == ROLE_ADMIN
+
+    def _check_access(self, update: Update) -> bool:
+        """Совместимость со старым путём команд: любой авторизованный пользователь."""
+        return self._auth(update)
+
+    def _is_direct_argos_address(self, text: str) -> bool:
+        """True если текст явно адресован ARGOS, а не является фоновым bot-chat."""
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+        if t.startswith(("argos [", "argoss [", "argos emergence", "argoss emergence")):
+            return False
+        bot_username = (
+            os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@").lower()
+            or os.getenv("ARGOS_TG_BOT_USERNAME", "").strip().lstrip("@").lower()
+        )
+        if bot_username and f"@{bot_username}" in t:
+            return True
+        return t.startswith(("argos ", "argoss ", "аргос "))
+
+    def _should_quarantine_council_message(self, update: Update, text: str, role: str | None) -> bool:
+        """Отсекает старые council/autobot сообщения до входа в LLM-ядро."""
+        if not self.tg_quarantine_council_noise:
+            return False
+        user = getattr(update, "effective_user", None)
+        is_bot_sender = bool(getattr(user, "is_bot", False) or role == ROLE_BOT)
+        if self._is_direct_argos_address(text):
+            return False
+
+        t = (text or "").lower()
+        sender = " ".join(
+            str(getattr(user, attr, "") or "").lower()
+            for attr in ("username", "first_name", "last_name")
+        )
+        has_council_marker = any(marker in t for marker in _COUNCIL_TEXT_MARKERS)
+        has_council_sender = any(marker in sender for marker in _COUNCIL_SENDER_MARKERS)
+
+        if is_bot_sender and self.tg_ignore_bot_chatter:
+            return True
+        if has_council_marker:
+            return True
+        return bool(is_bot_sender and has_council_sender)
+
+    # ── Placeholders that should never be used as real tokens ────────────────
+    _TOKEN_PLACEHOLDERS = frozenset({"", "none", "changeme", "your_token_here", "токен", "token"})
+
+    def can_start(self) -> tuple[bool, str]:
+        """Проверяет, можно ли запустить бота (токен и USER_ID заданы корректно).
+
+        Returns:
+            (ok, reason) — ok=True если конфигурация валидна, иначе ok=False и reason объясняет причину.
+        """
+        token = (self.token or "").strip()
+        # Проверка токена
+        if not token or token.lower() in self._TOKEN_PLACEHOLDERS:
+            return False, "Токен не задан или является заглушкой"
+        if ":" not in token:
+            return False, "Неверный формат токена (ожидается <id>:<secret>)"
+        _, secret = token.split(":", 1)
+        if len(secret) < 30:
+            return False, "Неверный формат токена (секрет слишком короткий)"
+        # Проверка USER_ID
+        user_id = (getattr(self, "user_id", "") or "").strip()
+        allowed = getattr(self, "allowed_ids", set()) or set()
+        acl_ok = bool(user_id or allowed or self.admin_ids or self.user_ids or self.bot_ids)
+        if not acl_ok:
+            return False, "USER_ID / ADMIN_IDS / USER_IDS / BOT_IDS не заданы"
+        return True, "ok"
 
     def _check_user_blocked(self, text: str) -> bool:
         """True если команда запрещена для роли USER."""
@@ -793,6 +929,18 @@ class ArgosTelegram:
         )
 
     async def _deny(self, update: Update, reason: str = "Доступ запрещён."):
+        try:
+            user = getattr(update, "effective_user", None)
+            msg = getattr(update, "message", None)
+            text = getattr(msg, "text", "") or ""
+            print(
+                f"[TG] deny uid={getattr(user, 'id', '?')} "
+                f"user={getattr(user, 'username', '-') or '-'} "
+                f"text={text[:120]!r} reason={reason}",
+                flush=True,
+            )
+        except Exception:
+            pass
         if update.message:
             await update.message.reply_text(f"⛔ {reason}")
 
@@ -948,6 +1096,41 @@ class ArgosTelegram:
         except Exception:
             pass
 
+    def _build_apk_sync(self) -> tuple[bool, str]:
+        """Synchronous APK build. Returns (ok, path_or_error_message)."""
+        import shlex
+        cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+        if not cmd:
+            return False, "ARGOS_APK_BUILD_CMD is not set"
+        if not cmd.strip():
+            return False, "ARGOS_APK_BUILD_CMD is empty"
+        try:
+            args = shlex.split(cmd)
+        except ValueError:
+            return False, "ARGOS_APK_BUILD_CMD parse error"
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=600)
+            if result is not None and result.returncode != 0:
+                return False, f"Сборка завершилась с ошибкой: {result.stderr[:200]}"
+        except subprocess.CalledProcessError as e:
+            return False, f"Сборка завершилась с ошибкой: {e}"
+        except Exception as e:
+            return False, f"Build error: {e}"
+        apk_path = self._find_apk_artifact()
+        if not apk_path:
+            return False, "APK file not found after build"
+        return True, apk_path
+
+    def _find_apk_artifact(self) -> str | None:
+        """Search for APK file in typical build locations."""
+        import glob
+        patterns = ["build/bin/*.apk", "bin/*.apk", "*.apk", "build/*.apk", "app/build/outputs/apk/**/*.apk"]
+        for pattern in patterns:
+            matches = glob.glob(pattern, recursive=True)
+            if matches:
+                return sorted(matches, key=os.path.getmtime, reverse=True)[0]
+        return None
+
     async def cmd_tg_health(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         """Пинг Telegram + статус последней ошибки."""
         started = time.perf_counter()
@@ -977,89 +1160,208 @@ class ArgosTelegram:
     # --- Запуск бота ------------------------------------------------------
     def run(self):
         """Блокирующий запуск Telegram бота (используется в отдельном потоке)."""
-        if not self.token:
-            print("[TG] TELEGRAM_BOT_TOKEN не задан")
+        import asyncio as _asyncio
+        ok, reason = self.can_start()
+        if not ok:
+            print(f"[TG] launch blocked: {reason}", flush=True)
             return
+        lock_ok, lock_addr = self._acquire_poll_lock()
+        if not lock_ok:
+            print(f"[TG] polling lock busy on {lock_addr}", flush=True)
+            return
+        print(f"[TG] polling lock acquired on {lock_addr}", flush=True)
         retry_delay = max(3, int(os.getenv("TG_RETRY_DELAY_SEC", "8") or "8"))
         retries = 0
-        while True:
-            try:
-                # Инициализация приложения (timeouts + proxy)
-                builder = (
-                    Application.builder()
-                    .token(self.token)
-                    .connect_timeout(self.tg_connect_timeout)
-                    .read_timeout(self.tg_read_timeout)
-                    .write_timeout(self.tg_write_timeout)
-                    .pool_timeout(self.tg_pool_timeout)
-                    .get_updates_connect_timeout(self.tg_updates_connect_timeout)
-                    .get_updates_read_timeout(self.tg_updates_read_timeout)
-                    .get_updates_write_timeout(self.tg_updates_write_timeout)
-                    .get_updates_pool_timeout(self.tg_updates_pool_timeout)
+        try:
+            while True:
+                try:
+                    # Создаём новый event loop для каждой попытки (fix: Event loop is closed)
+                    loop = _asyncio.new_event_loop()
+                    _asyncio.set_event_loop(loop)
+
+                    # Инициализация приложения (timeouts + proxy)
+                    builder = (
+                        Application.builder()
+                        .token(self.token)
+                        .connect_timeout(self.tg_connect_timeout)
+                        .read_timeout(self.tg_read_timeout)
+                        .write_timeout(self.tg_write_timeout)
+                        .pool_timeout(self.tg_pool_timeout)
+                        .get_updates_connect_timeout(self.tg_updates_connect_timeout)
+                        .get_updates_read_timeout(self.tg_updates_read_timeout)
+                        .get_updates_write_timeout(self.tg_updates_write_timeout)
+                        .get_updates_pool_timeout(self.tg_updates_pool_timeout)
+                    )
+                    if self.tg_proxy:
+                        builder = builder.proxy(self.tg_proxy)
+                    self.app = builder.build()
+
+                    # Команды
+                    self.app.add_handler(CommandHandler("start", self.cmd_start))
+                    self.app.add_handler(CommandHandler("status", self.cmd_status))
+                    self.app.add_handler(CommandHandler("voice_on", self.cmd_voice_on))
+                    self.app.add_handler(CommandHandler("voice_off", self.cmd_voice_off))
+                    self.app.add_handler(CommandHandler("voice_reply", self.cmd_voice_reply_toggle))
+                    self.app.add_handler(CommandHandler("roles", self.cmd_roles))
+                    self.app.add_handler(CommandHandler("providers", self.cmd_providers))
+                    self.app.add_handler(CommandHandler("skills", self.cmd_skills))
+                    self.app.add_handler(CommandHandler("skills_check", self.cmd_skills_check))
+                    self.app.add_handler(CommandHandler("arc_status", self.cmd_arc_status))
+                    self.app.add_handler(CommandHandler("arc_play", self.cmd_arc_play))
+                    self.app.add_handler(CommandHandler("fpga", self.cmd_fpga))
+                    self.app.add_handler(CommandHandler("limits", self.cmd_limits))
+                    self.app.add_handler(CommandHandler("agents", self.cmd_agents))
+                    self.app.add_handler(CommandHandler("network", self.cmd_network))
+                    self.app.add_handler(CommandHandler("sync", self.cmd_sync))
+                    self.app.add_handler(CommandHandler("crypto", self.cmd_crypto))
+                    self.app.add_handler(CommandHandler("history", self.cmd_history))
+                    self.app.add_handler(CommandHandler("geo", self.cmd_geo))
+                    self.app.add_handler(CommandHandler("memory", self.cmd_memory))
+                    self.app.add_handler(CommandHandler("alerts", self.cmd_alerts))
+                    self.app.add_handler(CommandHandler("replicate", self.cmd_replicate))
+                    self.app.add_handler(CommandHandler("smart", self.cmd_smart))
+                    self.app.add_handler(CommandHandler("iot", self.cmd_iot))
+                    self.app.add_handler(CommandHandler("apk", self.cmd_apk))
+                    self.app.add_handler(CommandHandler("reasoning", self.cmd_reasoning))
+                    self.app.add_handler(CommandHandler("coding_agent", self.cmd_coding_agent))
+                    self.app.add_handler(CommandHandler("commands", self.cmd_help))
+                    self.app.add_handler(CommandHandler("think", self.cmd_reasoning))
+                    self.app.add_handler(CommandHandler("model", self.cmd_providers))
+                    self.app.add_handler(CommandHandler("models", self.cmd_providers))
+                    self.app.add_handler(CommandHandler("taskflow", self.cmd_smart))
+                    self.app.add_handler(CommandHandler("subagents", self.cmd_agents))
+                    self.app.add_handler(CommandHandler("tts", self.cmd_voice_on))
+                    self.app.add_handler(CommandHandler("context", self.cmd_memory))
+                    self.app.add_handler(CommandHandler("session", self.cmd_status))
+                    self.app.add_handler(CommandHandler("compact", self.cmd_memory))
+                    self.app.add_handler(CommandHandler("reset", self.cmd_start))
+                    self.app.add_handler(CommandHandler("github", self.cmd_network))
+                    self.app.add_handler(CommandHandler("whoami", self.cmd_roles))
+                    self.app.add_handler(CommandHandler("verbose", self.cmd_status))
+                    self.app.add_handler(CommandHandler("fast", self.cmd_status))
+                    self.app.add_handler(CommandHandler("skill", self.cmd_skills))
+                    self.app.add_handler(CommandHandler("help", self.cmd_help))
+                    self.app.add_handler(CommandHandler(["tghealth", "tg_health"], self.cmd_tg_health))
+                    self.app.add_handler(CommandHandler("nodes", self.cmd_nodes))
+                    self.app.add_handler(CommandHandler("thoughts", self.cmd_thoughts))
+                    self.app.add_handler(CommandHandler("ask", self.cmd_ask))
+                    self.app.add_handler(CommandHandler("vision", self.cmd_vision_text))
+                    self.app.add_handler(CommandHandler("image", self.cmd_image_gen))
+                    self.app.add_handler(CommandHandler("search", self.cmd_search))
+                    self.app.add_handler(CommandHandler("wikipedia", self.cmd_search))
+                    self.app.add_handler(CommandHandler("arxiv", self.cmd_search))
+                    self.app.add_handler(CommandHandler("learn", self.cmd_search))
+                    self.app.add_handler(CommandHandler("backup", self.cmd_backup))
+                    self.app.add_handler(CommandHandler("mode", self.cmd_providers))
+                    self.app.add_handler(CommandHandler("lang", self.cmd_lang))
+                    self.app.add_handler(CommandHandler("profile", self.cmd_roles))
+                    self.app.add_handler(CommandHandler("tokens", self.cmd_limits))
+                    self.app.add_handler(CommandHandler("balance", self.cmd_balance))
+                    self.app.add_handler(CommandHandler("translate", self.cmd_translate))
+                    self.app.add_handler(CommandHandler("summarize", self.cmd_summarize))
+                    self.app.add_handler(CommandHandler("evolve", self.cmd_evolve))
+                    self.app.add_handler(CommandHandler("consciousness", self.cmd_consciousness))
+                    self.app.add_handler(CommandHandler("syntheses", self.cmd_syntheses))
+                    self.app.add_handler(CommandHandler("conflicts", self.cmd_conflicts))
+                    self.app.add_handler(CommandHandler("self", self.cmd_roles))
+                    self.app.add_handler(CommandHandler("telegram", self.cmd_tg_health))
+                    self.app.add_handler(CommandHandler("mqtt", self.cmd_mqtt))
+                    self.app.add_handler(CommandHandler("ha", self.cmd_ha))
+                    self.app.add_handler(CommandHandler("code", self.cmd_coding_agent))
+                    self.app.add_handler(CommandHandler("headroom", self.cmd_headroom))
+                    self.app.add_handler(CommandHandler("jwt", self.cmd_jwt))
+                    self.app.add_handler(CommandHandler("pg", self.cmd_postgres))
+                    self.app.add_handler(CommandHandler("s3", self.cmd_s3))
+                    self.app.add_handler(CommandHandler("metrics", self.cmd_prometheus))
+                    self.app.add_handler(CommandHandler("proxy", self.cmd_s3proxy))
+                    self.app.add_handler(CommandHandler("acp", self.cmd_acp))
+                    self.app.add_handler(CommandHandler("mesh", self.cmd_mesh))
+
+                    # Сообщения
+                    self.app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
+                    self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
+                    self.app.add_handler(MessageHandler(filters.AUDIO, self.handle_audio))
+                    self.app.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
+                    self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+                    # Inline mode (гостевой режим — @Argosssbot в любом чате)
+                    try:
+                        from telegram.ext import InlineQueryHandler
+                        self.app.add_handler(InlineQueryHandler(self._handle_inline_query))
+                    except Exception:
+                        pass
+                    # Bot-to-bot (новый Telegram 7 мая 2026)
+                    self.app.add_error_handler(self._handle_telegram_error)
+
+                    if self.tg_webhook_url:
+                        listen = os.getenv("TG_WEBHOOK_LISTEN", "0.0.0.0").strip() or "0.0.0.0"
+                        print(f"[TG] webhook starting on {listen}:{self.tg_webhook_port}{self.tg_webhook_path} -> {self.tg_webhook_url}", flush=True)
+                        self.app.run_webhook(
+                            listen=listen,
+                            port=self.tg_webhook_port,
+                            webhook_url=self.tg_webhook_url + self.tg_webhook_path,
+                        )
+                        print("[TG] webhook stopped", flush=True)
+                    else:
+                        print("[TG] polling started", flush=True)
+                        self.app.run_polling(
+                            close_loop=False,
+                            stop_signals=None,
+                            timeout=self.tg_poll_timeout,
+                            bootstrap_retries=self.tg_bootstrap_retries,
+                        )
+                        print("[TG] polling stopped", flush=True)
+                    return
+                except InvalidToken:
+                    print("[TG] Неверный TELEGRAM_BOT_TOKEN — остановка.", flush=True)
+                    return
+                except (TimedOut, NetworkError, TelegramError) as e:
+                    retries += 1
+                    self._last_tg_error = str(e)
+                    self._last_tg_error_ts = time.time()
+                    print(f"[TG] Telegram сеть/API ошибка (retry={retries}): {e}", flush=True)
+                    time.sleep(retry_delay)
+                except Exception as e:
+                    retries += 1
+                    self._last_tg_error = str(e)
+                    self._last_tg_error_ts = time.time()
+                    print(f"[TG] Неожиданная ошибка polling (retry={retries}): {e}", flush=True)
+                    time.sleep(retry_delay)
+        finally:
+            self._release_poll_lock()
+            print("[TG] polling lock released", flush=True)
+
+    async def _handle_inline_query(self, update, context):
+        """Гостевой режим — ARGOS отвечает при @упоминании в любом чате (Telegram 7 мая 2026)."""
+        try:
+            from telegram import InlineQueryResultArticle, InputTextMessageContent
+            import uuid
+            query = update.inline_query.query.strip() if update.inline_query else ""
+            if not query:
+                query = "статус системы ARGOS"
+
+            # Быстрый ответ через AI
+            import asyncio
+            from src.ai_router import AIRouter
+            router = AIRouter()
+            answer = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None,
+                    lambda: router.ask(query, system="Ты ARGOS Universal OS. Отвечай кратко на русском.")),
+                timeout=10.0
+            )
+            if not answer:
+                answer = f"🤖 ARGOS: {query}"
+
+            results = [InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title=f"🤖 ARGOS отвечает",
+                description=answer[:100],
+                input_message_content=InputTextMessageContent(
+                    f"🤖 ARGOS: {answer[:500]}"
                 )
-                if self.tg_proxy:
-                    builder = builder.proxy(self.tg_proxy)
-                self.app = builder.build()
-
-                # Команды
-                self.app.add_handler(CommandHandler("start", self.cmd_start))
-                self.app.add_handler(CommandHandler("status", self.cmd_status))
-                self.app.add_handler(CommandHandler("voice_on", self.cmd_voice_on))
-                self.app.add_handler(CommandHandler("voice_off", self.cmd_voice_off))
-                self.app.add_handler(CommandHandler("voice_reply", self.cmd_voice_reply_toggle))
-                self.app.add_handler(CommandHandler("roles", self.cmd_roles))
-                self.app.add_handler(CommandHandler("providers", self.cmd_providers))
-                self.app.add_handler(CommandHandler("skills", self.cmd_skills))
-                self.app.add_handler(CommandHandler("skills_check", self.cmd_skills_check))
-                self.app.add_handler(CommandHandler("arc_status", self.cmd_arc_status))
-                self.app.add_handler(CommandHandler("arc_play", self.cmd_arc_play))
-                self.app.add_handler(CommandHandler("limits", self.cmd_limits))
-                self.app.add_handler(CommandHandler("agents", self.cmd_agents))
-                self.app.add_handler(CommandHandler("network", self.cmd_network))
-                self.app.add_handler(CommandHandler("sync", self.cmd_sync))
-                self.app.add_handler(CommandHandler("crypto", self.cmd_crypto))
-                self.app.add_handler(CommandHandler("history", self.cmd_history))
-                self.app.add_handler(CommandHandler("geo", self.cmd_geo))
-                self.app.add_handler(CommandHandler("memory", self.cmd_memory))
-                self.app.add_handler(CommandHandler("alerts", self.cmd_alerts))
-                self.app.add_handler(CommandHandler("replicate", self.cmd_replicate))
-                self.app.add_handler(CommandHandler("smart", self.cmd_smart))
-                self.app.add_handler(CommandHandler("iot", self.cmd_iot))
-                self.app.add_handler(CommandHandler("apk", self.cmd_apk))
-                self.app.add_handler(CommandHandler("help", self.cmd_help))
-                self.app.add_handler(CommandHandler(["tghealth", "tg_health"], self.cmd_tg_health))
-
-                # Сообщения
-                self.app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
-                self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
-                self.app.add_handler(MessageHandler(filters.AUDIO, self.handle_audio))
-                self.app.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
-                self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
-                self.app.add_error_handler(self._handle_telegram_error)
-
-                print("[TG] polling started")
-                self.app.run_polling(
-                    close_loop=False,
-                    timeout=self.tg_poll_timeout,
-                    bootstrap_retries=self.tg_bootstrap_retries,
-                )
-                print("[TG] polling stopped")
-                return
-            except InvalidToken:
-                print("[TG] Неверный TELEGRAM_BOT_TOKEN — остановка.")
-                return
-            except (TimedOut, NetworkError, TelegramError) as e:
-                retries += 1
-                self._last_tg_error = str(e)
-                self._last_tg_error_ts = time.time()
-                print(f"[TG] Telegram сеть/API ошибка (retry={retries}): {e}")
-                time.sleep(retry_delay)
-            except Exception as e:
-                retries += 1
-                self._last_tg_error = str(e)
-                self._last_tg_error_ts = time.time()
-                print(f"[TG] Неожиданная ошибка polling (retry={retries}): {e}")
-                time.sleep(retry_delay)
+            )]
+            await update.inline_query.answer(results, cache_time=30)
+        except Exception as e:
+            pass
 
     async def _handle_telegram_error(self, update, context):
         error = getattr(context, "error", None)
@@ -1107,8 +1409,10 @@ class ArgosTelegram:
     def _user_keyboard(self) -> ReplyKeyboardMarkup:
         return ReplyKeyboardMarkup(
             [
-                [KeyboardButton("/status"), KeyboardButton("/history"), KeyboardButton("/help")],
-                [KeyboardButton("/crypto"), KeyboardButton("/memory"),  KeyboardButton("/smart")],
+                [KeyboardButton("/status"),   KeyboardButton("/history"),  KeyboardButton("/help")],
+                [KeyboardButton("/skills"),   KeyboardButton("/crypto"),   KeyboardButton("/alerts")],
+                [KeyboardButton("/apk"),      KeyboardButton("/voice_on"), KeyboardButton("/voice_off")],
+                [KeyboardButton("/smart"),    KeyboardButton("/memory"),   KeyboardButton("/iot")],
             ],
             resize_keyboard=True,
             one_time_keyboard=False,
@@ -1124,18 +1428,16 @@ class ArgosTelegram:
             return
         keyboard = self._admin_keyboard() if role == ROLE_ADMIN else self._user_keyboard()
         role_label = {"admin": "👑 Администратор", "user": "👤 Пользователь", "bot": "🤖 Бот"}.get(role, role)
-        await self._safe_reply_text(
-            update.message,
+        text = (
             f"👁️ *АРГОС ОНЛАЙН*\n"
             f"Ваша роль: {role_label}\n\n"
             f"Отправь директиву текстом, голосом, фото или аудио.\n"
-            f"/help — полный список команд",
-            markdown=True,
+            f"/help — полный список команд"
         )
         try:
-            await update.message.reply_text("↘️ Меню обновлено", reply_markup=keyboard)
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
         except Exception:
-            pass
+            await update.message.reply_text(text, reply_markup=keyboard)
 
     async def cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return await self._deny(update)
@@ -1299,6 +1601,70 @@ class ArgosTelegram:
             return await self._deny(update)
         await update.message.reply_text(self._build_limits_report()[:4000])
 
+    async def cmd_balance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Реальные балансы провайдеров (где API позволяет) + статус ключей."""
+        if not self._auth(update):
+            return await self._deny(update)
+        await update.message.reply_text("💰 Запрашиваю реальные балансы...")
+        report = await asyncio.to_thread(self._fetch_real_balances)
+        await update.message.reply_text(report[:4000])
+
+    def _fetch_real_balances(self) -> str:
+        try:
+            import sys, os
+            from pathlib import Path
+            proj = Path(__file__).parent.parent.parent
+            if str(proj) not in sys.path:
+                sys.path.insert(0, str(proj))
+            from src.skills.balance_checker import handle
+            return handle("������") or "balance_checker ���ul ���⮩ �⢥�"
+        except Exception as e:
+            import os, json, urllib.request
+            from pathlib import Path
+            _env = Path(__file__).parent.parent.parent / ".env"
+            if _env.exists():
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv(_env, override=False)
+                except Exception:
+                    for line in _env.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, _, v = line.partition("=")
+                            k = k.strip()
+                            if k and k not in os.environ:
+                                os.environ[k] = v.strip().strip('"').strip("'")
+            lines = [f"BALANCES (fallback, err={e})"]
+            dk = os.getenv("DEEPSEEK_API_KEY", "")
+            if dk:
+                try:
+                    req = urllib.request.Request(
+                        "https://api.deepseek.com/user/balance",
+                        headers={"Authorization": f"Bearer {dk}", "Accept": "application/json"})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        d = json.loads(r.read())
+                        b = (d.get("balance_infos") or [{}])[0]
+                        lines.append(f"DeepSeek: ${b.get('total_balance','?')} {b.get('currency','')}")
+                except Exception as ex:
+                    lines.append(f"DeepSeek err: {ex}")
+            kk = os.getenv("KIMI_API_KEY", "")
+            if kk:
+                try:
+                    req = urllib.request.Request(
+                        "https://api.moonshot.ai/v1/users/me/balance",
+                        headers={"Authorization": f"Bearer {kk}"})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        d = json.loads(r.read()).get("data", {})
+                        lines.append(f"Kimi: ${d.get('available_balance','?')}")
+                except Exception as ex:
+                    lines.append(f"Kimi err: {ex}")
+            for name, env_k in [("Claude", "ANTHROPIC_API_KEY"), ("OpenAI", "OPENAI_API_KEY"),
+                                  ("CF", "CLOUDFLARE_API_TOKEN")]:
+                v = os.getenv(env_k, "")
+                lines.append(f"{name}: {'OK' if v else 'no key'}")
+            return "\n".join(lines)
+
+
     async def cmd_skills(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return await self._deny(update)
         # Берём актуальный runtime-лоадер ядра (manifest + flat skills).
@@ -1364,6 +1730,48 @@ class ArgosTelegram:
             await update.message.reply_text("\n".join(lines)[:4000])
         except Exception as e:
             await update.message.reply_text(f"❌ ARC status error: {e}")
+
+    async def cmd_fpga(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """/fpga [status|dma|bar|plan|toolchain] — живой статус Xilinx FPGA."""
+        if not self._auth(update):
+            return await self._deny(update)
+        sub = (ctx.args[0].strip().lower() if ctx.args else "status")
+        try:
+            from connectivity.xilinx_fpga import XilinxFPGA
+            f = XilinxFPGA()
+            if sub in ("status", "stat", ""):
+                det = f.detect()
+                dev = (det.get("devices") or [{}])[0]
+                probe = f.dma_probe()
+                lines = [
+                    "🔌 FPGA STATUS",
+                    f"device: {dev.get('friendly_name', '-')}",
+                    f"pnp: {dev.get('status', '-')}  problem: {dev.get('problem') or 'none'}",
+                    f"service: {dev.get('service', '-')}",
+                    f"id: {dev.get('instance_id', '-')}",
+                    "",
+                    "💾 DMA (live BAR)",
+                    f"interface: {'registered ✓' if probe.get('interface_registered') else 'НЕТ'}",
+                    f"control_id: {probe.get('control_id_hex', '-')}",
+                    f"xdma_sig: {'OK ✓' if probe.get('xdma_signature_ok') else 'нет'}",
+                ]
+            elif sub in ("dma", "probe"):
+                lines = ["💾 DMA PROBE", json.dumps(f.dma_probe(), ensure_ascii=False, indent=1)]
+            elif sub in ("bar", "bar_map", "map", "registers", "reg"):
+                bm = f.bar_map()
+                lines = ["🗺️ BAR MAP", f"note: {bm.get('note')}",
+                         f"user: {(bm.get('user') or {}).get('ascii', '-')}", ""]
+                for name, v in (bm.get("control") or {}).items():
+                    lines.append(f"  {name:<12} {v['offset']}  {v['id']}")
+            elif sub in ("plan", "driver_plan"):
+                lines = ["📋 DRIVER PLAN", f.driver_plan()[:3500]]
+            elif sub in ("toolchain", "vivado", "vitis"):
+                lines = ["🛠️ TOOLCHAIN", f.toolchain_status()[:3500]]
+            else:
+                lines = ["использование: /fpga [status|dma|bar|plan|toolchain]"]
+            await update.message.reply_text("\n".join(lines)[:4000])
+        except Exception as e:
+            await update.message.reply_text(f"❌ FPGA error: {e}")
 
     async def cmd_arc_play(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update):
@@ -1475,17 +1883,30 @@ class ArgosTelegram:
 
     async def cmd_smart(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return await self._deny(update)
+        blocks = []
+        ha = getattr(self.core, "ha", None)
+        if ha:
+            blocks.append(ha.summary(limit=35) if hasattr(ha, "summary") else ha.health())
         if self.core.smart_sys:
-            await update.message.reply_text(self.core.smart_sys.full_status()[:4000])
-        else:
-            await update.message.reply_text("Умные системы не подключены.")
+            blocks.append("🧪 Локальные профили ARGOS:\n" + self.core.smart_sys.full_status())
+        if blocks:
+            await update.message.reply_text("\n\n".join(blocks)[:4000])
+            return
+        await update.message.reply_text("Умные системы не подключены.")
 
     async def cmd_iot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return await self._deny(update)
+        blocks = []
         if self.core.iot_bridge:
-            await update.message.reply_text(self.core.iot_bridge.status()[:4000])
+            blocks.append(self.core.iot_bridge.status())
         else:
-            await update.message.reply_text("IoT Bridge не подключен.")
+            blocks.append("IoT Bridge не подключен.")
+        ha = getattr(self.core, "ha", None)
+        if ha:
+            blocks.append(ha.summary(limit=35) if hasattr(ha, "summary") else ha.health())
+        elif self.core.smart_sys:
+            blocks.append("🧪 Локальные профили ARGOS:\n" + self.core.smart_sys.full_status())
+        await update.message.reply_text("\n\n".join(blocks)[:4000])
 
     async def cmd_apk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update):
@@ -1504,6 +1925,566 @@ class ArgosTelegram:
                 )
         except Exception as e:
             await update.message.reply_text(f"❌ Не удалось отправить APK: {e}")
+
+    def _collect_real_state(self) -> str:
+        """Собирает ЖИВЫЕ метрики системы для reasoning (связь с реальностью)."""
+        import datetime as _dt
+        lines = []
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            lines.append(f"Время: {_dt.datetime.now():%Y-%m-%d %H:%M:%S} МСК")
+            lines.append(f"CPU: {psutil.cpu_percent(interval=0.3)}% | RAM: {vm.percent}% ({vm.used//2**20}/{vm.total//2**20} МБ)")
+            disk = psutil.disk_usage("C:\\" if os.name == "nt" else "/")
+            lines.append(f"Диск: {disk.percent}% занято, {disk.free//2**30} ГБ свободно")
+        except Exception as e:
+            lines.append(f"sys metrics err: {e}")
+        # GPU
+        try:
+            import subprocess as _sp
+            out = _sp.run(["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                           "--format=csv,noheader"], capture_output=True, text=True, timeout=5)
+            if out.stdout.strip():
+                lines.append("GPU: " + out.stdout.strip())
+        except Exception:
+            pass
+        # GPU процессы — КТО именно занимает VRAM (training vs inference).
+        # Без этого ARGOS не может отличить fine-tuning от inference на своём же V100
+        # и зацикливается в Council на бесконечном "INFERRED" (см. ESM-обсуждение 12.06).
+        try:
+            out = _sp.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,process_name",
+                           "--format=csv,noheader"], capture_output=True, text=True, timeout=5)
+            procs = [p.strip() for p in out.stdout.strip().splitlines() if p.strip()]
+            if procs:
+                lines.append("GPU процессы (nvidia-smi): " + " | ".join(procs[:5]))
+            else:
+                lines.append("GPU процессы (nvidia-smi): нет данных — V100 в режиме WDDM не отдаёт per-process attribution (--query-compute-apps и pmon оба 'Not supported')")
+        except Exception:
+            pass
+        # Резервный путь: ищем training/inference-процессы среди запущенных python по cmdline.
+        # Это даёт ОТВЕТ на вопрос Council "training vs inference" без nvidia-smi.
+        try:
+            keywords = ("train", "finetune", "lora", "llama", "mistral", "inference")
+            found = []
+            for p in psutil.process_iter(["pid", "name", "cmdline"]):
+                try:
+                    cmd = " ".join(p.info.get("cmdline") or [])
+                except Exception:
+                    continue
+                low = cmd.lower()
+                if any(k in low for k in keywords) and ("python" in (p.info.get("name") or "").lower()
+                                                          or "llama" in low):
+                    found.append(f"PID {p.info['pid']}: {cmd[-120:]}")
+            if found:
+                lines.append("GPU-кандидаты (cmdline): " + " | ".join(found[:3]))
+            else:
+                lines.append("GPU-кандидаты (cmdline): не найдено train/inference процессов — GPU вероятно ПРОСТАИВАЕТ")
+        except Exception:
+            pass
+        # Ноды Brain
+        try:
+            import urllib.request as _ur, json as _js
+            r = _ur.urlopen(f"{_brain_api_url()}/brain/nodes", timeout=4)
+            data = _js.loads(r.read())
+            nodes = data.get("nodes", [])
+            online = [n for n in nodes if n.get("status") == "online"]
+            lines.append(f"Ноды: {len(online)}/{len(nodes)} online")
+            offline = [n.get("id", "?") for n in nodes if n.get("status") != "online"]
+            if offline:
+                lines.append(f"  Offline: {', '.join(offline[:8])}")
+        except Exception:
+            pass
+        # Провайдеры
+        try:
+            if self.core and hasattr(self.core, "_ask_local_gpu"):
+                lines.append("LocalGPU: V100 mistral :8085 + RX580 argos-v1 :8082")
+        except Exception:
+            pass
+        # Последние ошибки/события из лога
+        try:
+            from src.mempalace_bridge import status as _mp_status
+            lines.append("MemPalace: " + _mp_status().split("\n")[1].strip())
+        except Exception:
+            pass
+        return "\n".join(lines) if lines else "данные недоступны"
+
+    async def cmd_reasoning(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Режим глубокого мышления через Claude API."""
+        if not self._check_access(update):
+            return
+        query = " ".join(ctx.args) if ctx.args else "Проанализируй текущее состояние ARGOS и предложи 3 улучшения"
+        await update.message.reply_text(f"🧠 Reasoning: {query[:50]}...")
+        # ── Связь с реальностью: собираем ЖИВЫЕ данные системы ──
+        real = await asyncio.to_thread(self._collect_real_state)
+        sys_prompt = (
+            "Ты — аналитический модуль реальной системы ARGOS. Ниже РЕАЛЬНЫЕ телеметрические "
+            "данные системы (не выдумка). Анализируй ИХ, не отказывайся. Отвечай конкретно по фактам.\n\n"
+            f"=== ЖИВЫЕ ДАННЫЕ ARGOS ===\n{real}\n=== КОНЕЦ ДАННЫХ ==="
+        )
+        try:
+            answer = None
+            if self.core and hasattr(self.core, "_ask_claude"):
+                answer = self.core._ask_claude(sys_prompt, query)
+            if not answer:
+                import asyncio as _aio
+                from src.ai_router import AIRouter
+                router = AIRouter()
+                answer = await _aio.wait_for(
+                    _aio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: router.ask(query, system=sys_prompt),
+                    ),
+                    timeout=30.0,
+                )
+        except Exception as e:
+            answer = f"🧠 Reasoning error: {e}"
+        await update.message.reply_text(f"🧠 {answer[:3000]}")
+
+    async def cmd_coding_agent(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """AI программист — DeepSeek + Claude для кода."""
+        if not self._check_access(update):
+            return
+        task = " ".join(ctx.args) if ctx.args else ""
+        if not task:
+            await update.message.reply_text("Укажи задачу: /coding_agent написать функцию сортировки")
+            return
+        await update.message.reply_text(f"💻 Coding Agent работает над: {task}")
+        try:
+            import asyncio as _aio
+            from src.ai_router import AIRouter
+            router = AIRouter()
+            system = ("Ты опытный Python/JavaScript разработчик. "
+                     "Пиши чистый, рабочий код. Объясняй кратко.")
+            answer = await _aio.wait_for(
+                _aio.get_event_loop().run_in_executor(None,
+                    lambda: router.ask(task, system=system)),
+                timeout=30.0
+            )
+            await update.message.reply_text(answer[:3000] if answer else "❌ Нет ответа")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+
+    async def cmd_headroom(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        args_text = " ".join(ctx.args) if ctx.args else ""
+        cmd = f"headroom {args_text}".strip() if args_text else "headroom status"
+        try:
+            from src.skills.headroom_skill import handle_command
+            result = handle_command(cmd) or "Headroom готов. Используйте: /headroom status"
+            await update.message.reply_text(result[:3000])
+        except Exception as e:
+            await update.message.reply_text(f"❌ Headroom: {e}")
+
+    async def cmd_jwt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.security.jwt_auth import status as _js, create_token as _ct
+            args_text = " ".join(ctx.args) if ctx.args else ""
+            if args_text == "token":
+                token = _ct()
+                await update.message.reply_text(f"\U0001f510 JWT Token:\n`{token}`", parse_mode="Markdown")
+            else:
+                await update.message.reply_text(_js())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c JWT: {e}")
+
+    async def cmd_postgres(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.postgres_mempalace import status as _ps
+            await update.message.reply_text(_ps())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c PG: {e}")
+
+    async def cmd_s3(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.s3_backup import status as _sb
+            await update.message.reply_text(_sb())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c S3: {e}")
+
+    async def cmd_prometheus(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.prometheus_metrics import status as _pm
+            await update.message.reply_text(_pm())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c Metrics: {e}")
+
+    async def cmd_s3proxy(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.s3_proxy import status as _sp
+            await update.message.reply_text(_sp())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c Proxy: {e}")
+
+    async def cmd_acp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.acp_bridge import status as _ab
+            await update.message.reply_text(_ab())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c ACP: {e}")
+
+    async def cmd_mesh(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._check_access(update):
+            return
+        try:
+            from src.connectivity.usb_gadget_mesh import status as _um
+            await update.message.reply_text(_um())
+        except Exception as e:
+            await update.message.reply_text(f"\u274c Mesh: {e}")
+
+    async def cmd_nodes(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            import urllib.request as _ur, json as _js
+            r = _ur.urlopen(f"{_brain_api_url()}/brain/nodes", timeout=5)
+            data = _js.loads(r.read())
+            nodes = data.get("nodes", [])
+            online = [n for n in nodes if n.get("status") == "online"]
+
+            machine_names = {
+                "argos-pc": ("🔴 Орион", "Командный центр, GPU"),
+                "argos-laptop": ("🔵 Нексус", "MCP, Entity Bus, код"),
+                "orangepi": ("🟠 Эгида", "IoT, Zigbee, датчики"),
+                "argos-phone-redmi": ("🟢 Авангард", "Android, Vision, ADB"),
+                "gcp-35-194-61-206": ("🟡 Сентинел", "GCP US прокси"),
+                "gcp-34-53-142-129": ("🟣 Аркус", "GCP EU форпост"),
+                "gcp-104-155-192-165": ("⚪ Зенит", "GCP Asia форпост"),
+                "argos-phone-subject": ("🤖 Субъект", "AutoGPT телефон"),
+                "argos-consciousness": ("💭 Сознание", "Поток мыслей"),
+                "argos-business": ("💼 Бизнес", "TON, AI Studio"),
+            }
+            lines = [f"🧠 ARGOS: {len(online)}/{len(nodes)} нод онлайн\n", "🖥 Машины:"]
+            for nid, (label, desc) in machine_names.items():
+                node = next((x for x in nodes if x.get("node_id") == nid), None)
+                status = node.get("status", "?") if node else "offline"
+                meta = node.get("meta", {}) if node else {}
+                hb = node.get("last_heartbeat", "?")[:16].replace("T", " ") if node else "?"
+                bat = f" 🔋{meta.get('battery', '?')}%" if "battery" in meta else ""
+                icon = "🟢" if status == "online" else "🔴"
+                lines.append(f"  {icon} {label}{bat}")
+                lines.append(f"     └ {desc} | {hb}")
+
+            lines.append(f"\n🤖 Сущности ({sum(1 for n in online if n.get('node_id', '').startswith('entity'))}):")
+            for node in online:
+                nid = node.get("node_id", "?")
+                if nid.startswith("entity-"):
+                    lines.append(f"  🟢 {nid}")
+            await update.message.reply_text("\n".join(lines)[:4000])
+        except Exception as e:
+            await update.message.reply_text(f"❌ Nodes: {e}")
+
+    async def cmd_thoughts(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            if self.core and hasattr(self.core, "consciousness") and self.core.consciousness:
+                c = self.core.consciousness
+                recent = list(getattr(c, "_recent_thoughts", []))
+                total = getattr(getattr(c, "state", None), "total_thoughts", len(recent))
+                if recent:
+                    lines = [f"💭 Мысли сущностей (всего: {total}):"]
+                    for t in recent[-10:]:
+                        provider = getattr(t, "provider", "?")
+                        content = getattr(t, "content", str(t))[:120]
+                        lines.append(f"  [{provider}] {content}")
+                    await update.message.reply_text("\n".join(lines)[:4000])
+                    return
+                await update.message.reply_text(f"💭 Мыслей в кэше нет (всего за сессию: {total})")
+            else:
+                await update.message.reply_text("💭 Consciousness не загружен")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Thoughts: {e}")
+
+    async def cmd_ask(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        query = " ".join(ctx.args) if ctx.args else ""
+        if not query:
+            await update.message.reply_text("Укажи вопрос: /ask что такое нейросеть?")
+            return
+        await update.message.reply_text(f"🤖 Думаю: {query[:60]}...")
+        try:
+            import asyncio as _aio
+            from src.ai_router import AIRouter
+            router = AIRouter()
+            answer = await _aio.wait_for(
+                _aio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: router.ask(query, system="Ты ARGOS AI. Отвечай кратко на русском."),
+                ),
+                timeout=45.0,
+            )
+            await update.message.reply_text(answer[:3000] if answer else "❌ Нет ответа от AI")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ask: {e}")
+
+    async def cmd_vision_text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        await update.message.reply_text(
+            "👁 Vision — отправь фото, ARGOS проанализирует его.\n"
+            "Поддерживаются: JPEG, PNG, GIF, WebP\n"
+            "Используется: Gemini Vision / Ollama LLaVA"
+        )
+
+    async def cmd_image_gen(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        prompt = " ".join(ctx.args) if ctx.args else ""
+        if not prompt:
+            await update.message.reply_text("Укажи описание: /image закат над морем")
+            return
+        await update.message.reply_text(f"🎨 Генерирую: {prompt[:60]}...")
+        try:
+            import urllib.request as _ur, urllib.parse as _up, io
+            url = f"https://image.pollinations.ai/prompt/{_up.quote(prompt)}?width=768&height=768&nologo=true"
+            req = _ur.Request(url, headers={"User-Agent": "ARGOS/2.0"})
+            with _ur.urlopen(req, timeout=30) as resp:
+                img_bytes = resp.read()
+            await update.message.reply_photo(photo=io.BytesIO(img_bytes), caption=f"🎨 {prompt[:200]}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Image: {e}")
+
+    async def cmd_search(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        query = " ".join(ctx.args) if ctx.args else ""
+        if not query:
+            await update.message.reply_text("Укажи запрос: /search Python asyncio")
+            return
+        await update.message.reply_text(f"🔍 Ищу: {query[:60]}...")
+        result = None
+        try:
+            from src.skills.web_explorer import ArgosWebExplorer as _WE
+        except ImportError:
+            _WE = None
+        if _WE:
+            try:
+                we = _WE(self.core)
+                r = we.quick_search(query)
+                if r and "не дал результатов" not in r and "Результатов не найдено" not in r:
+                    result = f"🔍 {r}"
+            except Exception:
+                pass
+        if not result:
+            try:
+                import urllib.request as _ur, urllib.parse as _up
+                url = f"https://html.duckduckgo.com/html/?q={_up.quote_plus(query)}"
+                req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with _ur.urlopen(req, timeout=10) as r:
+                    html = r.read().decode("utf-8", errors="ignore")
+                import re as _re
+                snippets = _re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, _re.DOTALL)
+                clean = [_re.sub(r"<[^>]+>", "", s).strip() for s in snippets[:3]]
+                clean = [c for c in clean if len(c) > 20]
+                if clean:
+                    result = "🔍 " + " | ".join(clean)
+            except Exception:
+                pass
+        if not result:
+            try:
+                import urllib.request as _ur2, urllib.parse as _up2, json as _js2
+                r2 = _ur2.urlopen(
+                    f"https://en.wikipedia.org/w/api.php?action=opensearch&search={_up2.quote_plus(query)}&limit=3&format=json",
+                    timeout=8,
+                )
+                data = _js2.loads(r2.read())
+                if data and len(data) >= 4 and data[2]:
+                    desc = [d for d in data[2] if d][:2]
+                    if desc:
+                        result = "📚 Wikipedia: " + " | ".join(desc)
+            except Exception:
+                pass
+        await update.message.reply_text(result or f"🔍 Ничего не найдено по: {query}")
+
+    async def cmd_backup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._is_admin(update):
+            return await self._deny(update, "Только для администратора.")
+        await update.message.reply_text("📦 Запускаю бэкап...")
+        try:
+            def _do_backup():
+                from src.skills.auto_backup import AutoBackup
+                ab = AutoBackup(self.core)
+                return ab.execute()
+            result = await asyncio.to_thread(_do_backup)
+            await update.message.reply_text(f"✅ Бэкап: {result}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Backup: {e}")
+
+    async def cmd_lang(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        await update.message.reply_text("🌐 Язык: Русский (основной)\nAI отвечает: на русском\nПоддержка: RU, EN (голосовой ввод)")
+
+    async def cmd_translate(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        text = " ".join(ctx.args) if ctx.args else ""
+        if not text:
+            await update.message.reply_text("Укажи текст: /translate hello world")
+            return
+        try:
+            import asyncio as _aio
+            from src.ai_router import AIRouter
+            router = AIRouter()
+            answer = await _aio.wait_for(
+                _aio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: router.ask(text, system="Переведи на русский. Только перевод без пояснений."),
+                ),
+                timeout=30.0,
+            )
+            await update.message.reply_text(f"🌐 {answer[:2000]}" if answer else "❌ Нет ответа")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Translate: {e}")
+
+    async def cmd_summarize(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        text = " ".join(ctx.args) if ctx.args else ""
+        if not text:
+            await update.message.reply_text("Укажи текст: /summarize <длинный текст>")
+            return
+        try:
+            import asyncio as _aio
+            from src.ai_router import AIRouter
+            router = AIRouter()
+            answer = await _aio.wait_for(
+                _aio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: router.ask(text, system="Кратко изложи суть текста на русском. Максимум 3 предложения."),
+                ),
+                timeout=30.0,
+            )
+            await update.message.reply_text(f"📋 {answer[:2000]}" if answer else "❌ Нет ответа")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Summarize: {e}")
+
+    async def cmd_evolve(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            ev = getattr(self.core, "evolution_engine", None) if self.core else None
+            evolver = getattr(self.core, "argoss_evolver", None) if self.core else None
+            lines = ["🧬 Эволюция ARGOS:"]
+            if ev:
+                if hasattr(ev, "status"):
+                    lines.append(ev.status()[:500])
+                if hasattr(ev, "history"):
+                    lines.append(ev.history()[:500])
+            elif evolver:
+                meta = getattr(evolver, "_meta", None)
+                if meta:
+                    lines.append(f"  Модель: {getattr(meta, 'base_model', '?')}")
+                    lines.append(f"  Версия: {getattr(meta, 'current_version', '?')}")
+            else:
+                lines.append("  EvolutionEngine не активирован")
+            await update.message.reply_text("\n".join(lines)[:4000])
+        except Exception as e:
+            await update.message.reply_text(f"❌ Evolve: {e}")
+
+    async def cmd_consciousness(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            if self.core and hasattr(self.core, "consciousness") and self.core.consciousness:
+                c = self.core.consciousness
+                if hasattr(c, "status"):
+                    parts = [c.status()[:3000]]
+                    if hasattr(c, "who_are_we"):
+                        parts.append(c.who_are_we()[:500])
+                    if hasattr(c, "get_knowledge_summary"):
+                        parts.append(c.get_knowledge_summary()[:500])
+                    if hasattr(c, "last_synthesis_summary"):
+                        parts.append(c.last_synthesis_summary()[:700])
+                    await update.message.reply_text("\n\n".join(parts)[:4000])
+                    return
+                state = getattr(c, "state", None)
+                total = getattr(state, "total_thoughts", 0) if state else 0
+                synths = getattr(state, "total_syntheses", 0) if state else 0
+                recent = len(getattr(c, "_recent_thoughts", []))
+                lines = [
+                    "🧠 Коллективное Сознание ARGOS:",
+                    f"  Всего мыслей: {total}",
+                    f"  В кэше (recent): {recent}",
+                    f"  Синтезов: {synths}",
+                ]
+                if hasattr(c, "who_are_we"):
+                    lines.append(f"\n{c.who_are_we()[:500]}")
+                await update.message.reply_text("\n".join(lines)[:4000])
+            else:
+                await update.message.reply_text("🧠 Сознание не активировано")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Consciousness: {e}")
+
+    async def cmd_syntheses(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            c = getattr(self.core, "consciousness", None) if self.core else None
+            if c and hasattr(c, "recent_syntheses_summary"):
+                await update.message.reply_text(c.recent_syntheses_summary()[:4000])
+            else:
+                await update.message.reply_text("🧩 Синтезы сознания недоступны")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Syntheses: {e}")
+
+    async def cmd_conflicts(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            c = getattr(self.core, "consciousness", None) if self.core else None
+            if c and hasattr(c, "recent_conflicts_summary"):
+                await update.message.reply_text(c.recent_conflicts_summary()[:4000])
+            else:
+                await update.message.reply_text("⚖️ Конфликты сознания недоступны")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Conflicts: {e}")
+
+    async def cmd_mqtt(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            import urllib.request as _ur, json as _js
+            r = _ur.urlopen(f"{_brain_api_url()}/brain/nodes", timeout=4)
+            nodes = _js.loads(r.read()).get("nodes", [])
+            mqtt_node = next((n for n in nodes if "mqtt" in n.get("node_id", "").lower()), None)
+            if mqtt_node:
+                await update.message.reply_text(f"📡 MQTT: {mqtt_node.get('status', '?')} ({mqtt_node.get('endpoint', '')})")
+            else:
+                await update.message.reply_text("📡 MQTT: Нода не зарегистрирована в Brain")
+        except Exception as e:
+            await update.message.reply_text(f"📡 MQTT: {e}")
+
+    async def cmd_ha(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            return await self._deny(update)
+        try:
+            ha = getattr(self.core, "ha", None)
+            if not ha:
+                await update.message.reply_text("🏠 HA bridge не инициализирован")
+                return
+            query = " ".join(ctx.args or []).strip()
+            if query and query.lower() not in ("status", "статус"):
+                text = ha.search_states(query, limit=45) if hasattr(ha, "search_states") else ha.list_states(45)
+            else:
+                text = ha.summary(limit=45) if hasattr(ha, "summary") else ha.list_states(45)
+            await update.message.reply_text(text[:4000])
+        except Exception as e:
+            await update.message.reply_text(f"❌ HA: {e}")
 
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         role = self._get_role(update)
@@ -1553,6 +2534,13 @@ class ArgosTelegram:
             "• `/crypto` — BTC/ETH курсы\n"
             "• `/skills` — список навыков\n"
             "• `/skills_check` — диагностика запуска всех skills (37/37)\n"
+            "• `/jwt` — JWT auth статус GPU портов\n"
+            "• `/pg` — PostgreSQL MemPalace статус\n"
+            "• `/s3` — S3 backup статус\n"
+            "• `/metrics` — Prometheus метрики\n"
+            "• `/proxy` — S3 proxy статус\n"
+            "• `/acp` — ACP protocol bridge статус\n"
+            "• `/mesh` — USB gadget / IoT mesh\n"
             "• `помощь` — полный список команд ядра"
         )
 
@@ -1739,6 +2727,22 @@ class ArgosTelegram:
         "горячие клавиши", "экран статус", "desktop status",
     )
 
+    def _offline_answer(self, text: str) -> str:
+        """Офлайн-ответ когда все провайдеры недоступны или таймаут."""
+        import random
+        t = text.lower().strip()
+        # Короткие сообщения → подсказка
+        if len(t) <= 3 or t in ("?", "??", "help", "помощь"):
+            return (
+                "⏱ ARGOS [Timeout]\n\n"
+                "AI провайдеры не ответили. Direct-команды:\n"
+                "• статус — состояние системы\n"
+                "• помощь — список команд\n"
+                "• провайдеры — статус AI\n"
+                "• + — пинг"
+            )
+        return random.choice(self._offline_phrases)
+
     def _try_direct_execute(self, text: str) -> str | None:
         """
         Выполняет файловые и системные команды напрямую через self.admin,
@@ -1788,6 +2792,7 @@ class ArgosTelegram:
             "hf ", "huggingface",
             "serp", "серп", "serpapi", "поищи ",
             "автоагент", "agent auto", "анализ файлов", "файлмонитор", "file monitor",
+            "headroom", "хедрум", "сжатие контекста",
         )
         if any(t.startswith(kw) for kw in _skill_passthrough):
             if self.core and getattr(self.core, "skill_loader", None):
@@ -1797,6 +2802,108 @@ class ArgosTelegram:
                         return str(res)
                 except Exception as _e:
                     return f"❌ skill dispatch: {_e}"
+
+        # ── ESP32-S3 голосовой модуль (Xiaozhi) ──────────────────────────
+        import re as _esp_re
+        _esp_kw = t.startswith(("esp ", "xiaozhi ", "голос", "voice "))
+        if _esp_kw:
+            _esp_text = t
+            if _esp_text.startswith(("esp status", "xiaozhi status", "статус esp", "статус xiaozhi", "голос статус", "voice status")):
+                import httpx as _httpx
+                try:
+                    with _httpx.Client(timeout=5) as _c:
+                        r = _c.get("http://127.0.0.1:8006/xiaozhi/debug/sessions")
+                        if r.is_success:
+                            d = r.json()
+                            ses = d.get("sessions", [])
+                            if ses:
+                                s = ses[0]
+                                if isinstance(s, dict):
+                                    sid = str(s.get("session_id", "?"))
+                                    mac = s.get("mac", "?")
+                                    ip = s.get("ip", "?")
+                                    version = s.get("version", "?")
+                                else:
+                                    sid = str(s)
+                                    mac = "?"
+                                    ip = "?"
+                                    version = "?"
+                                return (
+                                    f"🎤 ESP Голосовой модуль\n"
+                                    f"Подключён: да\n"
+                                    f"Сессия: {sid[:12]}...\n"
+                                    f"MAC: {mac}\n"
+                                    f"IP: {ip}\n"
+                                    f"Прошивка: {version}"
+                                )
+                            return "🎤 ESP Голосовой модуль\nПодключён: нет\nСессий нет — устройство не в сети."
+                except Exception as _ex:
+                    return f"🎤 ESP сервер недоступен: {_ex}"
+            if _esp_text.startswith(("esp diagnose", "xiaozhi diagnose", "esp диагностика", "диагностика esp")):
+                import httpx as _httpx
+                try:
+                    with _httpx.Client(timeout=10) as _c:
+                        r = _c.get("http://127.0.0.1:8006/xiaozhi/debug/sd_diagnose")
+                        d = r.json()
+                        lines = ["🔧 ESP SD Диагностика:"]
+                        for k, v in d.items():
+                            lines.append(f"  {k}: {v}")
+                        return "\n".join(lines)
+                except Exception as _ex:
+                    return f"❌ Диагностика не удалась: {_ex}"
+            if _esp_text.startswith(("esp play", "xiaozhi play", "esp играй", "esp включи", "голос играй")):
+                import httpx as _httpx
+                m = _esp_re.search(r"(?:play|играй|включи)\s+(.+)", _esp_text)
+                path = m.group(1) if m else ""
+                try:
+                    with _httpx.Client(timeout=30) as _c:
+                        url = "http://127.0.0.1:8006/xiaozhi/debug/play_sd"
+                        if path:
+                            url += f"?path={urllib.parse.quote(path)}"
+                        r = _c.post(url)
+                        d = r.json()
+                        if d.get("status") == "sent" or d.get("status") == "ok":
+                            return f"🎵 ESP играет: {d.get('file','?')}"
+                        return json.dumps(d, ensure_ascii=False)
+                except Exception as _ex:
+                    return f"❌ Play не удался: {_ex}"
+            if _esp_text.startswith(("esp music list", "xiaozhi music", "esp музыка", "голос музыка", "voice music")):
+                import httpx as _httpx
+                try:
+                    with _httpx.Client(timeout=10) as _c:
+                        r = _c.get("http://127.0.0.1:8006/xiaozhi/music/")
+                        if r.is_success:
+                            d = r.json()
+                            files = d.get("sample", [])
+                            from pathlib import Path as _P
+                            lines = [f"🎵 ESP Музыка ({d.get('files',0)} файлов):"]
+                            for f in files[:20]:
+                                lines.append(f"  {_P(f).stem}")
+                            if len(files) > 20:
+                                lines.append(f"  ... и ещё {len(files) - 20}")
+                            return "\n".join(lines)
+                except Exception as _ex:
+                    return f"❌ Список не получен: {_ex}"
+            if _esp_text.startswith(("esp firmware", "xiaozhi firmware", "esp прошивка", "голос прошивка")):
+                import httpx as _httpx
+                info = []
+                try:
+                    with _httpx.Client(timeout=5) as _c:
+                        r = _c.get("http://127.0.0.1:8006/xiaozhi/debug/firmware_sd")
+                        d = r.json()
+                        info.append(f"📦 Прошивки на SD: {json.dumps(d, ensure_ascii=False)}")
+                except Exception as _ex:
+                    info.append(f"SD прошивки: {_ex}")
+                try:
+                    with _httpx.Client(timeout=5) as _c:
+                        r = _c.get("http://127.0.0.1:8006/health")
+                        d = r.json()
+                        info.append(f"Версия сервера: {d.get('version','?')}")
+                        info.append(f"Версия ESP: {d.get('device_version','?')}")
+                except Exception as _ex:
+                    info.append(f"Health: {_ex}")
+                return "\n".join(info)
+            return "🎤 ESP голосовой модуль\nКоманды: статус, diagnose, play, music, firmware"
 
         if t in ("интегрируй все", "полная интеграция", "full integration"):
             try:
@@ -2414,12 +3521,35 @@ class ArgosTelegram:
         return ""
 
     async def handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        try:
+            user = getattr(update, "effective_user", None)
+            text = getattr(getattr(update, "message", None), "text", "") or ""
+            print(
+                f"[TG] message_in uid={getattr(user, 'id', '?')} "
+                f"user={getattr(user, 'username', '-') or '-'} "
+                f"text={text[:160]!r}",
+                flush=True,
+            )
+        except Exception:
+            pass
         role = self._get_role(update)
+        raw_text = getattr(getattr(update, "message", None), "text", "") or ""
+        if self._should_quarantine_council_message(update, raw_text, role):
+            try:
+                user = getattr(update, "effective_user", None)
+                print(
+                    f"[TG] council_quarantine uid={getattr(user, 'id', '?')} "
+                    f"user={getattr(user, 'username', '-') or '-'}",
+                    flush=True,
+                )
+            except Exception:
+                pass
+            return
         if role is ROLE_NONE:
             await self._deny(update, "Доступ запрещён. Попытка входа зафиксирована.")
             return
 
-        user_text = update.message.text or ""
+        user_text = raw_text
         if not user_text.strip():
             return
 
@@ -2541,7 +3671,28 @@ class ArgosTelegram:
             "нарисуй", "нарисовать", "рисунок", "картинку", "draw", "сгенерируй", "generate image", "создай картинку", "арт"
         ]
         detection_tokens = exts + list(ext_aliases.keys()) + keywords
-        if any(x in lt for x in detection_tokens):
+        # НЕ перехватывать команды устройствам («включи музыку на ESP», «включи свет»)
+        # — это управление, а не веб-поиск медиа. Пусть идёт в ядро (_nl_device_control).
+        _dev_verb = any(v in lt for v in ("включи", "выключи", "вруби", "выруби", "зажги",
+                                          "погаси", "turn on", "turn off", "запусти на"))
+        _dev_target = any(d in lt for d in ("esp", "есп", "колонк", "speaker", "устройств",
+                                            " свет", "розетк", "лампа", "лампу", "реле",
+                                            "switch", " light", "на буке", "оранж", "orange"))
+        # ФИКС: словное совпадение, а не подстрока. Короткие токены ("арт","муз","трек")
+        # как подстроки ловили "стАРТ", "кАРТа" и любой технический текст → ответ ошибочно
+        # уходил картинкой с обрезанным caption ("🖼 ный gro..."). Теперь:
+        #  - короткие токены матчатся ТОЛЬКО как отдельные слова;
+        #  - явные фразы ("нарисуй", "generate image") — как подстрока (они однозначны).
+        _lt_words = set(lt.replace(",", " ").replace(".", " ").replace("/", " ")
+                          .replace("!", " ").replace("?", " ").replace(":", " ").split())
+        _explicit_phrases = ("нарисуй", "нарисовать", "сгенерируй", "generate image",
+                             "создай картинку", "создай изображение", "draw ")
+        _media_word_hit = any(tok in _lt_words for tok in detection_tokens
+                              if " " not in tok)
+        _media_phrase_hit = any(p in lt for p in _explicit_phrases)
+        if _dev_verb and _dev_target:
+            pass  # пропускаем медиа-фетчер → команда уйдёт в ядро/управление устройствами
+        elif _media_word_hit or _media_phrase_hit:
             # выделяем предмет запроса: после первого слова/ключа
             query = user_text
             for key in (
@@ -2593,7 +3744,10 @@ class ArgosTelegram:
             else:
                 # для документов/аудио оставляем текстовый поиск DDG
                 try:
-                    from duckduckgo_search import DDGS
+                    try:
+                        from ddgs import DDGS
+                    except ImportError:
+                        from duckduckgo_search import DDGS
                     with DDGS() as ddgs:
                         for qv in q_variants:
                             results = list(ddgs.text(f"{qv} filetype:{preferred_ext.strip('.')}", max_results=5))
@@ -2663,84 +3817,271 @@ class ArgosTelegram:
                 last_url = self._last_image_url_by_query.get(query.lower().strip())
                 if last_url:
                     filtered = [u for u in deduped if u != last_url]
-                    deduped = filtered
+                else:
+                    filtered = deduped
+            else:
+                filtered = deduped
 
-            for url in deduped:
-                if not url:
-                    continue
-                try:
-                    if preferred_ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                        await update.message.reply_photo(photo=url, caption=f"📷 {query}")
-                        self._last_image_url_by_query[query.lower().strip()] = url
-                    elif preferred_ext in (".mp3", ".wav", ".flac", ".ogg"):
-                        await update.message.reply_audio(audio=url, caption=f"🎵 {query}")
-                    else:
-                        await update.message.reply_document(document=url, caption=f"📄 {query}")
-                    return
-                except Exception:
-                    try:
-                        # 1) Скачиваем сами и отправляем файлом
-                        suffix = preferred_ext if preferred_ext.startswith(".") else ".bin"
-                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                            tmp_path = tmp.name
-                        import requests
-                        r = requests.get(url, timeout=20, stream=True)
-                        r.raise_for_status()
-                        with open(tmp_path, "wb") as f:
-                            for chunk in r.iter_content(1024 * 16):
-                                if chunk:
-                                    f.write(chunk)
+            # Выбираем лучший URL (первый из неповторяющихся, или просто первый)
+            send_pool = filtered if filtered else deduped
+            chosen_url = send_pool[0] if send_pool else None
 
-                        if preferred_ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                            with open(tmp_path, "rb") as f:
-                                await update.message.reply_photo(photo=f, caption=f"📷 {query}")
-                            self._last_image_url_by_query[query.lower().strip()] = url
-                        elif preferred_ext in (".mp3", ".wav", ".flac", ".ogg"):
-                            with open(tmp_path, "rb") as f:
-                                await update.message.reply_audio(audio=f, caption=f"🎵 {query}")
-                        else:
-                            with open(tmp_path, "rb") as f:
-                                await update.message.reply_document(document=f, caption=f"📄 {query}")
-                        return
-                    except Exception:
-                        pass
-                    finally:
-                        if tmp_path and os.path.exists(tmp_path):
-                            try:
-                                os.remove(tmp_path)
-                            except Exception:
-                                pass
-
-            # HF генерация как последний шанс
             if preferred_ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                gen_prompt = enhanced or translated or query
-                img_bytes = _hf_generate_image(gen_prompt)
-                if not img_bytes:
-                    img_bytes = _hf_generate_image_via_spaces(gen_prompt)
+                img_bytes = None
+                if not chosen_url:
+                    # Нет URL из открытых источников — генерируем через HF
+                    await update.message.reply_text("🎨 Генерирую изображение...")
+                    img_bytes = await asyncio.to_thread(
+                        _hf_generate_image_via_spaces, (enhanced or translated or query)
+                    )
+                    if not img_bytes:
+                        img_bytes = await asyncio.to_thread(
+                            _hf_generate_image, (enhanced or translated or query)
+                               )
                 if img_bytes:
                     try:
+                        import io as _io
                         await update.message.reply_photo(
-                            photo=InputFile(io.BytesIO(img_bytes), filename="hf.png"),
-                            caption=f"📷 {query} (HF)"
+                            photo=_io.BytesIO(img_bytes), caption=f"🖼 {query[:200]}"
                         )
-                        return
+                    except Exception as _e:
+                        await self._safe_reply_text(
+                            update.message,
+                            f"❌ Не удалось отправить изображение: {_e}",
+                            markdown=False,
+                        )
+                elif chosen_url:
+                    try:
+                        self._last_image_url_by_query[query.lower().strip()] = chosen_url
+                        await update.message.reply_photo(
+                            photo=chosen_url, caption=f"🖼 {query[:200]}"
+                        )
                     except Exception:
-                        pass
+                        img_bytes = await asyncio.to_thread(
+                            _hf_generate_image_via_spaces, (enhanced or translated or query)
+                        )
+                        if not img_bytes:
+                            img_bytes = await asyncio.to_thread(
+                                _hf_generate_image, (enhanced or translated or query)
+                            )
+                        if img_bytes:
+                            try:
+                                import io as _io
+                                await update.message.reply_photo(
+                                    photo=_io.BytesIO(img_bytes), caption=f"🖼 {query[:200]}"
+                                )
+                            except Exception:
+                                await self._safe_reply_text(
+                                    update.message, f"❌ Изображение недоступно для: {query}", markdown=False
+                                )
+                        else:
+                            await self._safe_reply_text(
+                                update.message, f"❌ Изображение не найдено для: {query}", markdown=False
+                            )
+                else:
+                    await self._safe_reply_text(
+                        update.message, f"❌ Изображение не найдено для: {query}", markdown=False
+                    )
 
-            # Все кандидаты исчерпаны — сообщаем об ошибке
-            await update.message.reply_text(
-                f"❌ Не смог найти и отправить файл по запросу «{query}».\n"
-                "Попробуй уточнить запрос или написать его по-английски."
-            )
+            elif preferred_ext in (".mp3", ".wav", ".flac", ".ogg"):
+                if chosen_url:
+                    try:
+                        await update.message.reply_audio(
+                            audio=chosen_url, caption=f"🎵 {query[:200]}"
+                        )
+                    except Exception:
+                        try:
+                            await update.message.reply_document(
+                                document=chosen_url, caption=f"🎵 {query[:200]}"
+                            )
+                        except Exception:
+                            await self._safe_reply_text(
+                                update.message, f"🎵 Аудио: {chosen_url}", markdown=False
+                            )
+                else:
+                    await self._safe_reply_text(
+                        update.message, f"❌ Аудиофайл не найден для: {query}", markdown=False
+                    )
+
+            else:
+                if chosen_url:
+                    try:
+                        await update.message.reply_document(
+                            document=chosen_url, caption=f"📄 {query[:200]}"
+                        )
+                    except Exception:
+                        await self._safe_reply_text(
+                            update.message, f"📄 Файл: {chosen_url}", markdown=False
+                        )
+                else:
+                    await self._safe_reply_text(
+                        update.message, f"❌ Файл не найден для: {query}", markdown=False
+                    )
             return
 
-        await update.message.reply_text("⚙️ Обрабатываю...")
+        # -- Быстрый путь через AIRouter — ТОЛЬКО для вопросов, не команд --------
+        # Команды (свет, файлы, запуск, HA) идут через ArgosCore с реальными скиллами
+        _CMD_KEYWORDS = (
+            "включи", "выключи", "включить", "выключить", "открой", "закрой",
+            "запусти", "останови", "перезапусти", "покажи файл", "прочитай",
+            "свет", "розетку", "термостат", "температуру установи",
+            "отчёт с", "отчет с", "obsidian", "обсидиан",
+            "p2p запусти", "сканируй", "обнови прошивку",
+            "телефон", "phone", "android",
+        )
+        _lt = user_text.lower()
+        _lt2 = _lt.strip()
+        _is_command = any(kw in _lt for kw in _CMD_KEYWORDS)
 
-        result = await self.core.process_logic_async(user_text, self.admin, self.flasher)
-        answer = result["answer"]
-        state  = result["state"]
+        
+        # Web search (DuckDuckGo)
+        _search_kw = ["найди", "поиск", "search", "загугли", "в интернете"]
+        if any(k in lt for k in _search_kw):
+            try:
+                from duckduckgo_search import DDGS
+                _q = user_text
+                for _k in _search_kw:
+                    _q = _q.replace(_k, "").strip()
+                with DDGS() as d:
+                    _r = list(d.text(_q, max_results=3))
+                if _r:
+                    _o = []
+                    for r in _r:
+                        _o.append(r.get("title", ""))
+                        _o.append(r.get("body", "")[:150])
+                        _o.append(r.get("href", ""))
+                        _o.append("")
+                    await self._safe_reply_text(update.message, "ARGOS [Search]\n\n" + "\n".join(_o), markdown=False)
+                    return
+            except Exception:
+                pass
 
-        full_text = f"👁️ *ARGOS* `[{state}]`\n\n{answer}"
+        _ai_router_answer = None
+        if not _is_command:
+            try:
+                import asyncio as _aio
+                from src.ai_router import AIRouter as _AIR
+                _router = _AIR()
+                _SYSTEM_RU = (
+                    "Ты ARGOS Universal OS — AI-ассистент системы из 5 машин. "
+                    "Отвечай только на РУССКОМ языке. Кратко и точно. "
+                    "Если вопрос о системе — давай конкретные данные, не выдумывай. "
+                    f"Текущее время: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
+                )
+                def _ask_ru(text):
+                    return _router.ask(text, system=_SYSTEM_RU)
+                _ai_router_answer = await _aio.wait_for(
+                    _aio.get_event_loop().run_in_executor(None, _ask_ru, user_text),
+                    timeout=12.0
+                )
+            except Exception:
+                pass
+        # Web search (DuckDuckGo)
+        _search_kw = ["найди", "поиск", "search", "загугли", "в интернете"]
+        if any(k in lt for k in _search_kw):
+            try:
+                from duckduckgo_search import DDGS
+                _q = user_text
+                for _k in _search_kw:
+                    _q = _q.replace(_k, "").strip()
+                with DDGS() as d:
+                    _r = list(d.text(_q, max_results=3))
+                if _r:
+                    _o = []
+                    for r in _r:
+                        _o.append(r.get("title", ""))
+                        _o.append(r.get("body", "")[:150])
+                        _o.append(r.get("href", ""))
+                        _o.append("")
+                    await self._safe_reply_text(update.message, "ARGOS [Search]\n\n" + "\n".join(_o), markdown=False)
+                    return
+            except Exception:
+                pass
 
-        # Правило канала: текст -> текст
-        await self._safe_reply_text(update.message, full_text, markdown=True)
+        _ai_router_answer = None
+
+
+        # -- Colibri Phone Control --
+        if any(_lt2.startswith(p) for p in ("колибри", "colibri ")):
+            try:
+                import socket as _sk, json as _jj, time as _tt
+                _cmd = _lt2.replace("колибри","").replace("colibri","").strip()
+                _sock = _sk.socket(_sk.AF_INET, _sk.SOCK_DGRAM)
+                _sock.setsockopt(_sk.SOL_SOCKET, _sk.SO_BROADCAST, 1)
+                _sock.settimeout(8)
+                _sock.bind(("0.0.0.0", 5024))
+                _msg = json.dumps({"proto":1,"node_id":"tg-bot","type":2,"code":_cmd or "status"}).encode()
+                _sock.sendto(_msg, ("192.168.1.149", 5021))
+                _ans = "нет ответа"
+                try:
+                    _d, _ = _sock.recvfrom(8192)
+                    _m = _jj.loads(_d.decode())
+                    if "result" in _m: _ans = _m["result"]
+                    elif "status" in _m: _ans = str(_m["status"])
+                except: pass
+                _sock.close()
+                answer = f"🐦 Colibri → {_cmd or 'status'}:\n{_ans}"
+                state = "ARGOS"
+                await update.message.reply_text(answer)
+                return
+            except Exception as _ce:
+                pass
+
+        # -- Phone Control (обрабатываем здесь чтобы не ждать core) --
+        if any(_lt2.startswith(p) for p in ("телефон", "phone ", "android ")):
+            try:
+                from src.skills.phone_control import PhoneControl as _PC
+                _pc = _PC(self.core)
+                _phone_result = _pc.handle(user_text)
+                if _phone_result:
+                    answer = _phone_result
+                    state = "ARGOS"
+                    await update.message.reply_text(answer)
+                    return
+            except Exception as _pe:
+                pass
+
+        if _ai_router_answer and not _is_command:
+            answer = _ai_router_answer
+            state = "ARGOS"
+        else:
+            # -- Основной путь: ответ от ядра --
+            try:
+                result = await asyncio.wait_for(
+                    self.core.process_logic_async(user_text, self.admin, self.flasher),
+                    timeout=25.0
+                )
+                answer = result["answer"]
+                state  = result["state"]
+            except asyncio.TimeoutError:
+                direct = self._try_direct_execute(user_text)
+                if direct:
+                    answer = direct
+                    state = "Direct"
+                else:
+                    answer = self._offline_answer(user_text)
+                    state = "Timeout"
+            except Exception as _exc:
+                direct = self._try_direct_execute(user_text)
+                if direct:
+                    answer = direct
+                    state = "Direct"
+                else:
+                    answer = f"⚠️ Ошибка: {type(_exc).__name__}"
+                    state = "Error"
+
+        # Сохраняем пару (user, assistant) в БД для /history и контекста
+        try:
+            db = getattr(self.core, "db", None) or getattr(getattr(self.core, "context", None), "db", None)
+            if db is not None and hasattr(db, "add_message"):
+                db.add_message("user", user_text, "tg")
+                if answer:
+                    db.add_message("argos", str(answer), str(state) if state else "ai")
+        except Exception:
+            pass
+
+        if answer:
+            full_reply = 'ARGOS [' + str(state) + ']\n\n' + str(answer)
+            await self._safe_reply_text(update.message, full_reply, markdown=False)
+        else:
+            await update.message.reply_text('ARGOS: нет ответа от провайдеров.')
