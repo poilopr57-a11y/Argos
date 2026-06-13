@@ -248,7 +248,10 @@ $out | ConvertTo-Json -Depth 6
             if device.get("driver_missing"):
                 lines.append("  Windows Code 28: драйвер не установлен.")
         lines.append("")
-        lines.append("ARGOS mode: inventory/diagnostics only until XDMA/QDMA/vendor driver + bitstream are installed.")
+        lines.append("ARGOS mode: inventory/detect only.")
+        if not self._unsafe_dma_allowed():
+            lines.append("SAFETY: XDMA BAR/DMA reads are blocked after AV_XDMA bugcheck 0x50.")
+            lines.append("Set ARGOS_FPGA_DMA_UNSAFE=i_accept_bsod_risk only for a deliberate lab test.")
         return "\n".join(lines)
 
     def is_xdma(self) -> bool:
@@ -382,6 +385,24 @@ $out | ConvertTo-Json -Depth 6
     # GUID_DEVINTERFACE_XDMA из xdma_public.h (D:\xdma_driver_win-2020.5).
     XDMA_INTERFACE_GUID = "{74c7e4a9-6d5d-4a70-bc0d-20691dff9e9d}"
 
+    def _unsafe_dma_allowed(self) -> bool:
+        """Explicit opt-in for XDMA ReadFile/WriteFile access.
+
+        Recent PAGE_FAULT_IN_NONPAGED_AREA crashes were reported as
+        AV_XDMA!unknown_function, so plain diagnostics must never touch the
+        XDMA device nodes by default.
+        """
+        value = os.getenv("ARGOS_FPGA_DMA_UNSAFE", "").strip().lower()
+        return value in {"1", "true", "yes", "on", "i_accept_bsod_risk"}
+
+    def _dma_blocked_note(self) -> str:
+        return (
+            "XDMA BAR/DMA access is blocked by ARGOS safety guard. "
+            "Windows logged BlueScreen AV_XDMA!unknown_function / bugcheck 0x50 "
+            "after DMA reads. Use status/detect only. To deliberately test the "
+            "unstable driver path, set ARGOS_FPGA_DMA_UNSAFE=i_accept_bsod_risk."
+        )
+
     def _xdma_base_path(self) -> str | None:
         """Базовый DevicePath XDMA через cfgmgr32 CM_Get_Device_Interface_ListW.
         Надёжнее SetupAPI в ctypes (нет усечения HDEVINFO на x64).
@@ -420,6 +441,8 @@ $out | ConvertTo-Json -Depth 6
     def dma_read(self, node: str = "control", offset: int = 0,
                  length: int = 4) -> bytes | None:
         """Чтение из XDMA узла. node: control|user|c2h_0|... None если недоступно."""
+        if not self._unsafe_dma_allowed():
+            return None
         if os.name != "nt":
             return None
         base = self._xdma_base_path()
@@ -460,6 +483,10 @@ $out | ConvertTo-Json -Depth 6
         res: dict[str, Any] = {"ok": False, "node": node,
                                "offset": f"0x{offset:x}", "written": len(data),
                                "readback_hex": None, "verified": None, "note": ""}
+        if not self._unsafe_dma_allowed():
+            res["blocked"] = True
+            res["note"] = self._dma_blocked_note()
+            return res
         if os.name != "nt":
             res["note"] = "не Windows"
             return res
@@ -515,6 +542,7 @@ $out | ConvertTo-Json -Depth 6
             "device_path": None,
             "control_id_hex": None,
             "xdma_signature_ok": False,
+            "blocked": False,
             "note": "",
         }
         base = self._xdma_base_path()
@@ -526,6 +554,10 @@ $out | ConvertTo-Json -Depth 6
             return result
         result["interface_registered"] = True
         result["device_path"] = base
+        if not self._unsafe_dma_allowed():
+            result["blocked"] = True
+            result["note"] = self._dma_blocked_note()
+            return result
         raw = self.dma_read("control", 0x0, 4)
         if raw and len(raw) == 4:
             val = int.from_bytes(raw, "little")
@@ -551,10 +583,15 @@ $out | ConvertTo-Json -Depth 6
         """Живая карта control-BAR: ID каждого XDMA-субмодуля + user-сигнатура.
         Реальное чтение через драйвер, без моков."""
         out: dict[str, Any] = {"available": False, "control": {}, "user": None,
-                               "note": ""}
+                               "blocked": False, "note": ""}
         base = self._xdma_base_path()
         if not base:
             out["note"] = "XDMA interface не зарегистрирован (драйвер не привязан)"
+            return out
+        if not self._unsafe_dma_allowed():
+            out["available"] = True
+            out["blocked"] = True
+            out["note"] = self._dma_blocked_note()
             return out
         out["available"] = True
         for name, off in self._XDMA_SUBMODULES:
@@ -610,6 +647,13 @@ $out | ConvertTo-Json -Depth 6
                               ensure_ascii=False, indent=2)
         if action in {"dma_read", "read"}:
             # arg формат: "node offset [len]", напр. "user 0 16" или "control 0x1000 4"
+            if not self._unsafe_dma_allowed():
+                return json.dumps({
+                    "blocked": True,
+                    "node": None,
+                    "hex": None,
+                    "note": self._dma_blocked_note(),
+                }, ensure_ascii=False, indent=2)
             parts = (arg or "control 0 4").split()
             node = parts[0] if parts else "control"
             off = int(parts[1], 0) if len(parts) > 1 else 0

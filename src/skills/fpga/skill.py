@@ -102,7 +102,12 @@ def snapshot() -> dict[str, Any]:
     snap["pnp_status"] = dev.get("status")
     snap["problem"] = dev.get("problem") or None
     snap["instance_id"] = dev.get("instance_id")
-    if snap["present"]:
+    # ВАЖНО: живое чтение BAR (MMIO) ТОЛЬКО когда PnP-статус == OK.
+    # Если устройство в Error/Disabled (или линк платы просел под "OK"-устройством),
+    # ReadFile в XDMA.sys разыменует мёртвый MMIO-указатель → BugCheck 0x50
+    # PAGE_FAULT_IN_NONPAGED_AREA (XDMA не обрабатывает surprise-removal).
+    # Доказано дампом 13.06: python.exe→NtReadFile→XDMA+0x2ea1→KeBugCheckEx, 3 краша подряд.
+    if snap["present"] and snap["pnp_status"] == "OK":
         probe = f.dma_probe()
         snap["dma_access"] = bool(probe.get("interface_registered"))
         snap["control_id"] = probe.get("control_id_hex")
@@ -110,6 +115,9 @@ def snapshot() -> dict[str, Any]:
         u = f.dma_read("user", 0, 8)
         if u:
             snap["user_sig"] = u.decode("ascii", "replace")
+    elif snap["present"]:
+        snap["note"] = (f"pnp_status={snap['pnp_status']} != OK → live-чтение BAR "
+                        "пропущено (защита от XDMA surprise-removal BSOD 0x50)")
     snap["healthy"] = bool(snap["present"]
                            and (snap["pnp_status"] == "OK")
                            and snap["xdma_signature"])
