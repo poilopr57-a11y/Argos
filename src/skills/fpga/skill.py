@@ -8,6 +8,7 @@ connectivity.xilinx_fpga.XilinxFPGA (BAR-чтение через CreateFile+Read
   fpga                 — статус (PnP + DMA + сигнатура XDMA)
   fpga bar             — карта control-BAR (все XDMA-субмодули) + user-сигнатура
   fpga read <node> <off> [len]  — точечное чтение BAR (node: control|user|c2h_0...)
+  fpga write <node> <off> <hex> — PIO-запись с readback (только node=user, guardrail)
   fpga monitor         — снимок здоровья (для периодического опроса)
   fpga heal            — self-healing: re-enable устройства если Error/Disabled
   fpga plan            — рекомендации по драйверу
@@ -204,6 +205,17 @@ def _render_read(parts: list[str]) -> str:
             f"le_u32: {u32}\nascii: {raw.decode('ascii', 'replace')}")
 
 
+def _render_write(parts: list[str]) -> str:
+    f = _fpga()
+    if not f:
+        return "❌ XilinxFPGA модуль недоступен"
+    if len(parts) < 3:
+        return "формат: fpga write <node> <offset> <hexbytes>  (node только user)"
+    res = f.command("write", " ".join(parts))
+    _obsidian_log("DMA WRITE", f"arg=`{' '.join(parts)}`\n```json\n{res}\n```")
+    return "✍️ DMA WRITE\n" + res
+
+
 def handle(text: str, core=None) -> Optional[str]:
     t = (text or "").lower().strip()
     if not any(tr in t for tr in TRIGGERS):
@@ -216,6 +228,8 @@ def handle(text: str, core=None) -> Optional[str]:
         return _render_bar()
     if sub in ("read", "dma_read"):
         return _render_read(parts[2:])
+    if sub in ("write", "dma_write"):
+        return _render_write(parts[2:])
     if sub in ("monitor", "mon", "health"):
         return "📊 MONITOR\n```json\n" + json.dumps(snapshot(), ensure_ascii=False, indent=1) + "\n```"
     if sub in ("heal", "selfheal", "self_heal", "fix"):
@@ -228,7 +242,7 @@ def handle(text: str, core=None) -> Optional[str]:
         f = _fpga()
         return ("```json\n" + json.dumps(f.dma_probe(), ensure_ascii=False, indent=1) + "\n```") if f else "❌"
     return ("fpga команды: status | bar | read <node> <off> [len] | "
-            "monitor | heal | plan | dma")
+            "write <node> <off> <hex> | monitor | heal | plan | dma")
 
 
 def execute(text: str = "") -> str:

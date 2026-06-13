@@ -1747,7 +1747,7 @@ class ArgosTelegram:
             await update.message.reply_text(f"❌ ARC status error: {e}")
 
     async def cmd_fpga(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        """/fpga [status|dma|bar|plan|toolchain] — живой статус Xilinx FPGA."""
+        """/fpga [status|dma|bar|read|write|plan|toolchain] — живой статус Xilinx FPGA."""
         if not self._auth(update):
             return await self._deny(update)
         sub = (ctx.args[0].strip().lower() if ctx.args else "status")
@@ -1782,8 +1782,15 @@ class ArgosTelegram:
                 lines = ["📋 DRIVER PLAN", f.driver_plan()[:3500]]
             elif sub in ("toolchain", "vivado", "vitis"):
                 lines = ["🛠️ TOOLCHAIN", f.toolchain_status()[:3500]]
+            elif sub in ("read", "dma_read"):
+                arg = " ".join(ctx.args[1:]) if len(ctx.args) > 1 else ""
+                lines = ["📟 DMA READ", f.command("read", arg)]
+            elif sub in ("write", "dma_write"):
+                arg = " ".join(ctx.args[1:]) if len(ctx.args) > 1 else ""
+                lines = ["✍️ DMA WRITE (только user BAR, с readback)", f.command("write", arg)]
             else:
-                lines = ["использование: /fpga [status|dma|bar|plan|toolchain]"]
+                lines = ["использование: /fpga [status|dma|bar|read <node> <off> [len]|"
+                         "write <node> <off> <hex>|plan|toolchain]"]
             await update.message.reply_text("\n".join(lines)[:4000])
         except Exception as e:
             await update.message.reply_text(f"❌ FPGA error: {e}")
@@ -3880,7 +3887,7 @@ class ArgosTelegram:
                     try:
                         self._last_image_url_by_query[query.lower().strip()] = chosen_url
                         await update.message.reply_photo(
-                            photo=chosen_url, caption=f"🖼 AI-генерация по запросу: {query[:170]}\n(изображение синтезировано, не проверено на соответствие)"
+                            photo=chosen_url, caption=f"🖼 {query[:170]}\n(результат поиска в открытых источниках, не AI-генерация)"
                         )
                     except Exception:
                         img_bytes = await asyncio.to_thread(
