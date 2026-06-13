@@ -452,6 +452,61 @@ $out | ConvertTo-Json -Depth 6
         finally:
             k.CloseHandle(h)
 
+    def dma_write(self, node: str, offset: int, data: bytes) -> dict[str, Any]:
+        """Запись в XDMA узел (PIO в BAR через WriteFile) + read-back для верификации.
+        ВНИМАНИЕ: пишет в реальные регистры FPGA. По умолчанию разрешён только
+        'user' (безопасный пользовательский BAR); control/h2c/c2h блокируются,
+        чтобы случайно не переинициализировать DMA-движок."""
+        res: dict[str, Any] = {"ok": False, "node": node,
+                               "offset": f"0x{offset:x}", "written": len(data),
+                               "readback_hex": None, "verified": None, "note": ""}
+        if os.name != "nt":
+            res["note"] = "не Windows"
+            return res
+        # guardrail: запись только в user BAR (контрольные регистры не трогаем)
+        if node.lower() not in ("user",):
+            res["note"] = (f"запись в '{node}' заблокирована — разрешён только 'user' "
+                           "(control/h2c/c2h управляют DMA-движком, риск)")
+            return res
+        base = self._xdma_base_path()
+        if not base:
+            res["note"] = "интерфейс XDMA не зарегистрирован"
+            return res
+        import ctypes as C
+        from ctypes import wintypes as W
+        path = base + "\\" + node
+        GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING = 0x80000000, 0x40000000, 3
+        k = C.windll.kernel32
+        k.CreateFileW.restype = C.c_void_p
+        k.SetFilePointerEx.argtypes = [C.c_void_p, C.c_longlong, C.c_void_p, W.DWORD]
+        k.WriteFile.argtypes = [C.c_void_p, C.c_void_p, W.DWORD,
+                                C.POINTER(W.DWORD), C.c_void_p]
+        k.CloseHandle.argtypes = [C.c_void_p]
+        INVALID = C.c_void_p(-1).value
+        h = k.CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, None,
+                          OPEN_EXISTING, 0, None)
+        if h is None or h == INVALID:
+            res["note"] = "CreateFile не удалось"
+            return res
+        try:
+            k.SetFilePointerEx(h, C.c_longlong(offset), None, 0)
+            wbuf = C.create_string_buffer(bytes(data), len(data))
+            wrote = W.DWORD(0)
+            if not k.WriteFile(h, wbuf, len(data), C.byref(wrote), None):
+                res["note"] = "WriteFile вернул FALSE"
+                return res
+            res["written"] = wrote.value
+        finally:
+            k.CloseHandle(h)
+        rb = self.dma_read(node, offset, len(data))
+        if rb is not None:
+            res["readback_hex"] = rb.hex()
+            res["verified"] = (rb == bytes(data))
+        res["ok"] = True
+        res["note"] = ("записано + read-back "
+                       + ("совпал ✓" if res["verified"] else "НЕ совпал (регистр RO/side-effect?)"))
+        return res
+
     def dma_probe(self) -> dict[str, Any]:
         """Проверка реального DMA-доступа. Читает \\control offset 0 →
         XDMA Identifier (0x1fc0xxxx) — надёжно независимо от bitstream."""
@@ -540,6 +595,19 @@ $out | ConvertTo-Json -Depth 6
             return json.dumps(self.dma_probe(), ensure_ascii=False, indent=2)
         if action in {"bar_map", "barmap", "bar", "map"}:
             return json.dumps(self.bar_map(), ensure_ascii=False, indent=2)
+        if action in {"dma_write", "write"}:
+            # arg формат: "node offset hexbytes", напр. "user 0x20 deadbeef"
+            parts = (arg or "").split()
+            if len(parts) < 3:
+                return "формат: write <node> <offset> <hexbytes>  (node только user)"
+            node = parts[0]
+            try:
+                off = int(parts[1], 0)
+                data = bytes.fromhex(parts[2])
+            except Exception as e:
+                return f"ошибка разбора: {e}"
+            return json.dumps(self.dma_write(node, off, data),
+                              ensure_ascii=False, indent=2)
         if action in {"dma_read", "read"}:
             # arg формат: "node offset [len]", напр. "user 0 16" или "control 0x1000 4"
             parts = (arg or "control 0 4").split()

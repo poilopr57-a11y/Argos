@@ -617,6 +617,21 @@ _COUNCIL_SENDER_MARKERS = (
     "валенок",
 )
 
+_TELEGRAM_EXPORT_LINE_RE = re.compile(r"^\[\d{2}\.\d{2}\.\d{4}\s+\d{1,2}:\d{2}\]\s+[^:\n]{1,80}:", re.MULTILINE)
+
+
+def _looks_like_telegram_export(text: str) -> bool:
+    """True for pasted Telegram export/log chunks that must be archived, not executed."""
+    value = (text or "").strip()
+    if not value:
+        return False
+    matches = _TELEGRAM_EXPORT_LINE_RE.findall(value)
+    if len(matches) >= 2:
+        return True
+    if len(matches) == 1 and ("\n" in value or "ARGOS [" in value or "Shell-команда не в белом списке" in value):
+        return True
+    return False
+
 
 def _env_bool(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in _TRUE_ENV
@@ -3534,6 +3549,17 @@ class ArgosTelegram:
             pass
         role = self._get_role(update)
         raw_text = getattr(getattr(update, "message", None), "text", "") or ""
+        if _looks_like_telegram_export(raw_text):
+            try:
+                user = getattr(update, "effective_user", None)
+                print(
+                    f"[TG] telegram_export_quarantine uid={getattr(user, 'id', '?')} "
+                    f"user={getattr(user, 'username', '-') or '-'}",
+                    flush=True,
+                )
+            except Exception:
+                pass
+            return
         if self._should_quarantine_council_message(update, raw_text, role):
             try:
                 user = getattr(update, "effective_user", None)
@@ -3842,7 +3868,7 @@ class ArgosTelegram:
                     try:
                         import io as _io
                         await update.message.reply_photo(
-                            photo=_io.BytesIO(img_bytes), caption=f"🖼 {query[:200]}"
+                            photo=_io.BytesIO(img_bytes), caption=f"🖼 AI-генерация по запросу: {query[:170]}\n(изображение синтезировано, не проверено на соответствие)"
                         )
                     except Exception as _e:
                         await self._safe_reply_text(
@@ -3854,7 +3880,7 @@ class ArgosTelegram:
                     try:
                         self._last_image_url_by_query[query.lower().strip()] = chosen_url
                         await update.message.reply_photo(
-                            photo=chosen_url, caption=f"🖼 {query[:200]}"
+                            photo=chosen_url, caption=f"🖼 AI-генерация по запросу: {query[:170]}\n(изображение синтезировано, не проверено на соответствие)"
                         )
                     except Exception:
                         img_bytes = await asyncio.to_thread(
@@ -3868,7 +3894,7 @@ class ArgosTelegram:
                             try:
                                 import io as _io
                                 await update.message.reply_photo(
-                                    photo=_io.BytesIO(img_bytes), caption=f"🖼 {query[:200]}"
+                                    photo=_io.BytesIO(img_bytes), caption=f"🖼 AI-генерация по запросу: {query[:170]}\n(изображение синтезировано, не проверено на соответствие)"
                                 )
                             except Exception:
                                 await self._safe_reply_text(
