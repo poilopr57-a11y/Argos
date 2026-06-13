@@ -181,8 +181,8 @@ git push origin v2.0.0
 - [ ] Убедиться, что GitHub Release создан автоматически с нужными артефактами
 - [ ] Проверить, что Docker-образ опубликован на GHCR:
   ```bash
-  docker pull ghcr.io/iliyaqdrwalqu/sigtrip:2.0.0
-  docker pull ghcr.io/iliyaqdrwalqu/sigtrip:latest
+  docker pull ghcr.io/labuaqlysnecy/Argos:2.0.0
+  docker pull ghcr.io/labuaqlysnecy/Argos:latest
   ```
 - [ ] Проверить, что пакет появился на PyPI:
   ```bash

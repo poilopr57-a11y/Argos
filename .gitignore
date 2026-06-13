@@ -24,3 +24,13 @@ releases/
 venv/
 argos_patch_*.zip
 files.zip
+.openclaw-workspace/
+
+# --- защита секретов: бэкапы .env содержат токены, не коммитить ---
+.env.backup*
+.env.bak*
+.env.corrupted*
+*.env.backup
+*.env.bak
+* — копия.env
+.env.*backup*

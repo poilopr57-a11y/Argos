@@ -393,6 +393,46 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
 .fi-open{font-size:12px;cursor:pointer;color:var(--muted);flex-shrink:0;text-decoration:none;padding:0 4px}.fi-open:hover{color:var(--cyan2)}
 .fi-del{font-size:14px;cursor:pointer;color:var(--dim);flex-shrink:0;padding:0 4px}.fi-del:hover{color:var(--red2)}
 .files-empty{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:20px}
+
+/* ═══════════════ HOME ASSISTANT ENTITIES ═══════════════ */
+.ha-status-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px}
+.ha-status-card.on{border-color:rgba(0,255,136,.2);background:linear-gradient(135deg,var(--card),rgba(0,255,136,.04))}
+.ha-status-card.off{border-color:rgba(239,68,68,.15)}
+.ha-status-icon{font-size:28px;line-height:1}
+.ha-status-body{flex:1;min-width:0}
+.ha-status-title{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text)}
+.ha-status-sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px}
+.ha-status-actions{display:flex;gap:6px;flex-shrink:0}
+
+.ent-section{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:16px 0 10px 0;padding:0 4px}
+.ent-section::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+.ent-count{font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:4px}
+
+.ent-grid{display:grid;gap:6px;margin-bottom:12px}
+.ent-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;display:flex;align-items:center;gap:10px;transition:all .15s;min-height:44px}
+.ent-card:hover{border-color:rgba(0,255,136,.18);background:rgba(0,255,136,.02)}
+.ent-card.togglable{cursor:pointer}
+.ent-indicator{flex-shrink:0;width:8px}
+.ent-indicator .sdot{width:8px;height:8px;animation:none}
+.ent-indicator .sdot.on{background:var(--green);box-shadow:0 0 8px rgba(0,255,136,.5)}
+.ent-indicator .sdot.off{background:var(--muted)}
+.ent-indicator .sdot.unavail{background:var(--red)}
+.ent-body{flex:1;min-width:0}
+.ent-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent-id{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent-ctrl{flex-shrink:0;display:flex;align-items:center;gap:8px}
+.ent-value{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--cyan2);text-align:right}
+.ent-value.green{color:var(--green)}
+.ent-value.orange{color:var(--orange2)}
+.ent-value.red{color:var(--red2)}
+.ent-value.dim{color:var(--muted);font-size:10px}
+.ent-toggle{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:12px;border:1px solid;font-family:var(--mono);font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;background:transparent;min-width:52px;justify-content:center}
+.ent-toggle:active{transform:scale(.94)}
+.ent-toggle.on{color:var(--green);border-color:rgba(0,255,136,.35);background:rgba(0,255,136,.08)}
+.ent-toggle.on:hover{background:rgba(0,255,136,.15)}
+.ent-toggle.off{color:var(--muted);border-color:rgba(75,96,128,.25)}
+.ent-toggle.off:hover{color:var(--text2);border-color:rgba(75,96,128,.4)}
+.ent-toggle.loading{opacity:.4;pointer-events:none}
 </style>
 </head>
 <body>
@@ -475,6 +515,16 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
       <span class="nav-icon">📥</span>
       <span>FETCH</span>
     </button>
+    <button class="nav-item" data-tab="ha">
+      <span class="nav-icon">🏠</span>
+      <span>HA</span>
+      <span class="nav-badge" id="nbHa">0</span>
+    </button>
+    <button class="nav-item" data-tab="devices">
+      <span class="nav-icon">🔌</span>
+      <span>DEVICES</span>
+      <span class="nav-badge" id="nbDevices">0</span>
+    </button>
   </nav>
 
   <div class="sb-foot">
@@ -516,7 +566,7 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
       <div class="card card-blue">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <div class="sdot x" id="bApiDot"></div>
-          <span style="font-family:var(--mono);font-size:12px;font-weight:600" id="bApiTxt">Brain API :5010</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:600" id="bApiTxt">Brain API /api</span>
         </div>
         <div style="font-family:var(--mono);font-size:10px;color:var(--muted)" id="bApiStatus">connecting…</div>
       </div>
@@ -526,7 +576,7 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
     <div class="svc-grid">
       <div class="svc-card">
         <div class="sdot x" id="shBrain"></div>
-        <div class="svc-info"><div class="svc-name">Brain API</div><div class="svc-val" id="shBrainV">:5010/health</div></div>
+        <div class="svc-info"><div class="svc-name">Brain API</div><div class="svc-val" id="shBrainV">/api/health</div></div>
       </div>
       <div class="svc-card">
         <div class="sdot x" id="shOllama"></div>
@@ -1060,6 +1110,108 @@ code{font-family:var(--mono);font-size:11px;color:var(--cyan2);
   </div>
   </div>
 
+  <!-- ══ HOME ASSISTANT ══ -->
+  <div class="panel" id="panel-ha">
+  <div class="pscroll">
+    <div class="ha-status-card" id="haStatusCard">
+      <div class="ha-status-icon" id="haStatusIcon">🏠</div>
+      <div class="ha-status-body">
+        <div class="ha-status-title" id="haStatusTitle">Home Assistant</div>
+        <div class="ha-status-sub" id="haStatusSub">проверка…</div>
+      </div>
+      <div class="ha-status-actions">
+        <button class="btn btn-x btn-sm" onclick="refreshHAEntities();refreshArgosIntegration()" title="Обновить">↻</button>
+        <button class="btn btn-x btn-sm" onclick="window.open('http://localhost:8123','_blank')" title="Открыть HA">↗</button>
+        <button class="btn btn-x btn-sm" onclick="startHA()" id="haStartBtn">▶ Docker</button>
+      </div>
+    </div>
+
+    <div class="grid gauto" style="margin-bottom:16px">
+      <div class="card"><div class="kpi"><div class="kpi-val" id="haTotal">—</div><div class="kpi-lbl">Сущностей</div></div></div>
+      <div class="card"><div class="kpi"><div class="kpi-val" id="haActive">—</div><div class="kpi-lbl">Активных</div></div></div>
+      <div class="card"><div class="kpi"><div class="kpi-val red" id="haUnavailable">—</div><div class="kpi-lbl">Unavailable</div></div></div>
+      <div class="card"><div class="kpi"><div class="kpi-val" id="haDomains">—</div><div class="kpi-lbl">Доменов</div></div></div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">⬡</span>ARGOS · HA INTEGRATION BUS</div>
+    <div class="grid gauto" style="margin-bottom:16px">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div class="sdot x" id="ahiHeadroomDot"></div>
+          <div class="kpi-lbl" style="margin:0">HEADROOM</div>
+        </div>
+        <div class="kpi-val" id="ahiHeadroomVal" style="font-size:28px">—</div>
+        <div class="kpi-sub" id="ahiHeadroomSub">compression store</div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div class="sdot x" id="ahiFpgaDot"></div>
+          <div class="kpi-lbl" style="margin:0">FPGA XDMA</div>
+        </div>
+        <div class="kpi-val blue" id="ahiFpgaVal" style="font-size:28px">—</div>
+        <div class="kpi-sub" id="ahiFpgaSub">Artix-7 / spr2801</div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div class="sdot x" id="ahiNnDot"></div>
+          <div class="kpi-lbl" style="margin:0">NN ACCEL</div>
+        </div>
+        <div class="kpi-val purple" id="ahiNnVal" style="font-size:28px">—</div>
+        <div class="kpi-sub" id="ahiNnSub">FPGA inference</div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div class="sdot x" id="ahiVpnDot"></div>
+          <div class="kpi-lbl" style="margin:0">VPN / DNS</div>
+        </div>
+        <div class="kpi-val orange" id="ahiVpnVal" style="font-size:28px">—</div>
+        <div class="kpi-sub" id="ahiVpnSub">WireGuard · DNS</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="sbox" style="flex:1;min-width:220px">
+          <span class="si">⌕</span><input id="haSearch" type="text" placeholder="поиск entity_id / friendly name" oninput="renderHAEntities()"/>
+        </div>
+        <select class="sel" id="haDomainFilter" style="min-width:160px" onchange="renderHAEntities()">
+          <option value="all">Все домены</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">⬡</span>HOME ASSISTANT · СУЩНОСТИ</div>
+    <div id="haEntities"><div class="files-empty">загрузка сущностей…</div></div>
+  </div>
+  </div>
+
+  <!-- ══ DEVICES · Home Assistant + реальные устройства ══ -->
+  <div class="panel" id="panel-devices">
+  <div class="pscroll">
+    <div class="grid gauto" style="margin-bottom:20px">
+      <div class="card"><div class="kpi"><div class="kpi-val" id="dvTotal">—</div><div class="kpi-lbl">Устройств</div></div></div>
+      <div class="card"><div class="kpi"><div class="kpi-val" id="dvOnline">—</div><div class="kpi-lbl">Online</div></div></div>
+      <div class="card"><div class="kpi"><div class="kpi-val red" id="dvOffline">—</div><div class="kpi-lbl">Offline</div></div></div>
+      <div class="card card-blue">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <div class="sdot x" id="dvHaDot"></div>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:600">Home Assistant :8123</span>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted)" id="dvHaStatus">проверка…</div>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn btn-x btn-sm" onclick="switchTab('ha')">панель HA</button>
+          <button class="btn btn-x btn-sm" onclick="window.open('http://localhost:8123','_blank')">↗ открыть</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec"><span class="sec-icon">⬡</span>РЕАЛЬНЫЕ УСТРОЙСТВА</div>
+    <div class="svc-grid" id="dvGrid" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
+      <div class="files-empty">сканирование устройств…</div>
+    </div>
+  </div>
+  </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /layout -->
@@ -1138,6 +1290,8 @@ const TAB_TITLES = {
   logs:    ['📝 LOGS',     'Brain API · Live Stream'],
   actions: ['⚡ ACTIONS',  'Quick System Controls'],
   fetch:   ['📥 FETCH',   'Content Fetcher · CC0 / Free / Safe'],
+  ha:      ['🏠 HA',      'Home Assistant · сущности и сервисы'],
+  devices: ['🔌 DEVICES', 'Железо · порты · реальные устройства'],
 };
 
 function switchTab(id) {
@@ -1160,6 +1314,312 @@ function _initTab(id) {
   if (id === 'vms')     refreshVMs();
   if (id === 'apis')    renderApis();
   if (id === 'fetch')   initFetch();
+  if (id === 'ha')      { refreshHAEntities(); refreshArgosIntegration(); }
+  if (id === 'devices') refreshDevices();
+}
+
+// ── TAB: DEVICES (Home Assistant + реальные устройства) ───────
+let _dvInterval = null;
+async function refreshDevices() {
+  try {
+    const r = await fetch('/api/devices', {cache:'no-store', signal:AbortSignal.timeout(8000)});
+    const d = await r.json();
+    const list = d.devices || [];
+    const online = list.filter(x=>x.online).length;
+    txt('dvTotal', list.length); txt('dvOnline', online); txt('dvOffline', list.length-online);
+    const nb = el('nbDevices'); if(nb) nb.textContent = online;
+    const ha = d.home_assistant || {};
+    const haDot = el('dvHaDot');
+    if (haDot) haDot.className = 'sdot ' + (ha.online ? 'g' : 'x');
+    txt('dvHaStatus', ha.online ? 'порт 8123 online' : 'не отвечает на :8123');
+    el('dvGrid').innerHTML = list.map(x => `
+      <div class="svc-card">
+        <div class="sdot ${x.online?'g':'x'}"></div>
+        <div class="svc-info">
+          <div class="svc-name">${x.icon||''} ${x.name}</div>
+          <div class="svc-val">${x.detail||x.addr||''}</div>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    el('dvGrid').innerHTML = '<div class="files-empty">/api/devices недоступен — '+e.message+'</div>';
+  }
+  if (!_dvInterval) _dvInterval = setInterval(()=>{ if(_curTab==='devices') refreshDevices(); }, 7000);
+}
+
+async function startHA() {
+  toast('Запуск Home Assistant (Docker)…', 4000);
+  txt('dvHaStatus', 'запускаю контейнер…');
+  txt('haStatusSub', 'запускаю контейнер Home Assistant…');
+  try {
+    const r = await fetch('/api/action/start-ha', {method:'POST', signal:AbortSignal.timeout(90000)});
+    const d = await r.json();
+    toast(d.ok ? 'HA контейнер запущен' : ('HA: '+(d.error||'ошибка')), 4000);
+    setTimeout(refreshDevices, 8000);
+    if (_curTab === 'ha') setTimeout(refreshHAEntities, 8000);
+  } catch(e) { toast('HA старт: '+e.message, 4000); }
+}
+
+// ── HOME ASSISTANT · Сущности ────────────────────────────────
+let _haInterval = null;
+let _haStatesCache = [];
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  }[c]));
+}
+
+function _haDomainIcon(domain) {
+  const icons = {light:'💡',switch:'⚡',sensor:'🌡️',binary_sensor:'🔔',climate:'❄️',
+    cover:'🪟',lock:'🔒',fan:'🌀',media_player:'📺',vacuum:'🧹',device_tracker:'📍',
+    button:'🔘',number:'🔢',select:'📋',scene:'🎬',script:'📜',automation:'🤖',
+    input_boolean:'☑️',input_number:'🔢',input_select:'📋',person:'👤',sun:'☀️',
+    weather:'🌤️',update:'🔄',zone:'📍',camera:'📷',calendar:'📅',timer:'⏱️',
+    alarm_control_panel:'🔐',water_heater:'🫖',humidifier:'💨'};
+  return icons[domain] || '⬡';
+}
+
+function _haToggleable(domain) {
+  return ['light','switch','fan','cover','lock','input_boolean','automation'].includes(domain);
+}
+
+function _haDomainName(domain) {
+  const names = {light:'СВЕТ',switch:'ВЫКЛЮЧАТЕЛИ',sensor:'СЕНСОРЫ',binary_sensor:'ДАТЧИКИ',
+    climate:'КЛИМАТ',cover:'ШТОРЫ',lock:'ЗАМКИ',fan:'ВЕНТИЛЯТОРЫ',media_player:'МЕДИА',
+    vacuum:'ПЫЛЕСОСЫ',device_tracker:'ТРЕКЕРЫ',button:'КНОПКИ',number:'ЧИСЛА',
+    input_boolean:'ПЕРЕКЛЮЧАТЕЛИ',input_number:'ЧИСЛА',input_select:'СПИСКИ',
+    scene:'СЦЕНЫ',automation:'АВТОМАТИЗАЦИИ',person:'ЛЮДИ',weather:'ПОГОДА',
+    update:'ОБНОВЛЕНИЯ',camera:'КАМЕРЫ',alarm_control_panel:'СИГНАЛИЗАЦИЯ',
+    calendar:'КАЛЕНДАРЬ',timer:'ТАЙМЕРЫ',humidifier:'УВЛАЖНИТЕЛИ',other:'ПРОЧЕЕ'};
+  return names[domain] || domain.toUpperCase();
+}
+
+function _haRenderState(stateObj) {
+  const eid = stateObj.entity_id || '';
+  const domain = eid.split('.')[0] || 'other';
+  const state = stateObj.state || 'unknown';
+  const attrs = stateObj.attributes || {};
+  const name = attrs.friendly_name || eid;
+  const unit = attrs.unit_of_measurement || '';
+  const eidJs = eid.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  const isOn = ['on','open','locked','home','playing'].includes(state);
+  const isUnavail = ['unavailable','unknown'].includes(state);
+  const dotClass = isUnavail ? 'unavail' : (isOn ? 'on' : 'off');
+  const canToggle = _haToggleable(domain);
+
+  let valueHtml = '';
+  let toggleHtml = '';
+
+  if (canToggle) {
+    const isToggleOn = isOn;
+    toggleHtml = `<button class="ent-toggle ${isToggleOn?'on':'off'}" id="hatog-${esc(eid)}"
+      onclick="toggleHAEntity('${domain}','${eidJs}')">${isToggleOn?'ON':'OFF'}</button>`;
+  }
+
+  if (domain === 'sensor' && state !== 'unavailable' && state !== 'unknown') {
+    valueHtml = `<div class="ent-value">${esc(state)}${unit?' <span class="ent-value dim">'+esc(unit)+'</span>':''}</div>`;
+  } else if (domain === 'binary_sensor') {
+    valueHtml = `<div class="ent-value ${isOn?'orange':'dim'}">${isOn?'ON':'OFF'}</div>`;
+  } else if (!canToggle && state !== 'unavailable') {
+    valueHtml = `<div class="ent-value dim">${esc(state)}</div>`;
+  } else if (isUnavail) {
+    valueHtml = `<div class="ent-value red">✗</div>`;
+  }
+
+  const cardClass = canToggle ? 'ent-card togglable' : 'ent-card';
+  return `<div class="${cardClass}" data-domain="${esc(domain)}" data-entity="${esc(eid)}">
+    <div class="ent-indicator"><div class="sdot ${dotClass}" id="hadot-${esc(eid)}"></div></div>
+    <div class="ent-body">
+      <div class="ent-name">${esc(name)}</div>
+      <div class="ent-id">${esc(eid)}</div>
+    </div>
+    <div class="ent-ctrl">${toggleHtml}${valueHtml}</div>
+  </div>`;
+}
+
+function updateHAStats(states) {
+  const unavailable = states.filter(s => ['unavailable','unknown'].includes(s.state)).length;
+  const active = states.filter(s => !['unavailable','unknown','off'].includes(s.state)).length;
+  const domains = new Set(states.map(s => (s.entity_id || 'other').split('.')[0] || 'other'));
+  txt('haTotal', states.length);
+  txt('haActive', active);
+  txt('haUnavailable', unavailable);
+  txt('haDomains', domains.size);
+  const nb = el('nbHa'); if (nb) nb.textContent = states.length;
+}
+
+function setAhiDot(id, ok, warn=false) {
+  const node = el(id);
+  if (node) node.className = 'sdot ' + (ok ? 'g' : (warn ? 'o' : 'x'));
+}
+
+async function refreshArgosIntegration() {
+  try {
+    const r = await fetch('/api/argos-ha/api/integration/summary', {cache:'no-store', signal:AbortSignal.timeout(12000)});
+    const d = await r.json();
+    const headroom = d.headroom || {};
+    const fpga = d.fpga || {};
+    const nn = d.nn || {};
+    const vpn = d.vpn || {};
+    const dns = d.dns || {};
+
+    const savings = Number(headroom.savings_pct ?? 0);
+    setAhiDot('ahiHeadroomDot', !!headroom.online);
+    txt('ahiHeadroomVal', Number.isFinite(savings) ? savings.toFixed(1) + '%' : '—');
+    txt('ahiHeadroomSub', `${headroom.items ?? 0} items · ${headroom.external_headroom_available ? 'native' : 'local'}`);
+
+    setAhiDot('ahiFpgaDot', !!fpga.online);
+    txt('ahiFpgaVal', fpga.online ? 'ON' : 'OFF');
+    txt('ahiFpgaSub', fpga.xdma_detected ? (fpga.expected_pci_id || 'XDMA detected') : 'XDMA not detected');
+
+    setAhiDot('ahiNnDot', !!nn.online);
+    txt('ahiNnVal', nn.online ? 'READY' : 'WAIT');
+    txt('ahiNnSub', nn.backend || 'not_ready');
+
+    setAhiDot('ahiVpnDot', !!vpn.vpn_active, (dns.status === 'configured'));
+    txt('ahiVpnVal', vpn.vpn_active ? 'WG' : (dns.status === 'configured' ? 'DNS' : 'OFF'));
+    txt('ahiVpnSub', `${vpn.peers ?? 0} peers · ${(dns.dns_servers || []).slice(0,2).join(', ') || 'dns unknown'}`);
+  } catch(e) {
+    setAhiDot('ahiHeadroomDot', false);
+    setAhiDot('ahiFpgaDot', false);
+    setAhiDot('ahiNnDot', false);
+    setAhiDot('ahiVpnDot', false);
+    txt('ahiHeadroomVal', 'ERR');
+    txt('ahiHeadroomSub', e.message);
+  }
+}
+
+function updateHADomainFilter(states) {
+  const sel = el('haDomainFilter');
+  if (!sel) return;
+  const current = sel.value || 'all';
+  const domains = [...new Set(states.map(s => (s.entity_id || 'other').split('.')[0] || 'other'))].sort();
+  sel.innerHTML = '<option value="all">Все домены</option>' +
+    domains.map(d => `<option value="${esc(d)}">${_haDomainIcon(d)} ${esc(_haDomainName(d))} (${states.filter(s => (s.entity_id || '').split('.')[0] === d).length})</option>`).join('');
+  sel.value = domains.includes(current) ? current : 'all';
+}
+
+function renderHAEntities() {
+  const container = el('haEntities');
+  if (!container) return;
+  const states = _haStatesCache || [];
+  if (!states.length) {
+    container.innerHTML = '<div class="files-empty">нет данных Home Assistant</div>';
+    return;
+  }
+
+  const q = (el('haSearch')?.value || '').trim().toLowerCase();
+  const domainFilter = el('haDomainFilter')?.value || 'all';
+  const filtered = states.filter(s => {
+    const eid = s.entity_id || '';
+    const domain = eid.split('.')[0] || 'other';
+    const name = (s.attributes && s.attributes.friendly_name) || eid;
+    const text = `${eid} ${name} ${s.state || ''}`.toLowerCase();
+    return (domainFilter === 'all' || domain === domainFilter) && (!q || text.includes(q));
+  });
+  if (!filtered.length) {
+    container.innerHTML = '<div class="files-empty">по фильтру ничего не найдено</div>';
+    return;
+  }
+
+  const groups = {};
+  for (const s of filtered) {
+    const domain = (s.entity_id || 'other').split('.')[0] || 'other';
+    if (!groups[domain]) groups[domain] = [];
+    groups[domain].push(s);
+  }
+
+  const domainOrder = ['light','switch','sensor','binary_sensor','climate','cover',
+    'lock','fan','media_player','vacuum','input_boolean','automation','scene',
+    'device_tracker','person','weather','update','camera','alarm_control_panel',
+    'calendar','timer','humidifier','number','select','button','input_number',
+    'input_select'];
+  const sortedDomains = Object.keys(groups).sort((a,b) => {
+    const ia = domainOrder.indexOf(a), ib = domainOrder.indexOf(b);
+    return (ia===-1?999:ia) - (ib===-1?999:ib);
+  });
+
+  let html = '';
+  for (const domain of sortedDomains) {
+    html += `<div class="ent-section">${_haDomainIcon(domain)} ${esc(_haDomainName(domain))} <span class="ent-count">${groups[domain].length}</span></div>`;
+    html += `<div class="ent-grid">${groups[domain].map(s => _haRenderState(s)).join('')}</div>`;
+  }
+  container.innerHTML = html;
+}
+
+async function refreshHAEntities() {
+  const container = el('haEntities');
+  const sc = el('haStatusCard');
+  const si = el('haStatusIcon');
+  const st = el('haStatusTitle');
+  const ss = el('haStatusSub');
+  if (!container) return;
+
+  try {
+    const r = await fetch('/api/ha/states', {cache:'no-store', signal:AbortSignal.timeout(8000)});
+    const d = await r.json();
+
+    if (d.online && Array.isArray(d.states)) {
+      const states = d.states;
+      _haStatesCache = states;
+      updateHAStats(states);
+      updateHADomainFilter(states);
+      renderHAEntities();
+
+      si.textContent = '✅';
+      sc.className = 'ha-status-card on';
+      st.textContent = `Home Assistant · ${states.length} сущностей`;
+      ss.textContent = `online · порт 8123`;
+      el('haStartBtn').style.display = 'none';
+    } else {
+      const errMsg = d.error || 'offline';
+      si.textContent = '⚠️';
+      sc.className = 'ha-status-card off';
+      st.textContent = 'Home Assistant';
+      ss.textContent = errMsg === 'HA_TOKEN не задан' ? 'HA_TOKEN не настроен в .env' : 'не запущен на :8123';
+      container.innerHTML = `<div class="files-empty">${errMsg === 'HA_TOKEN не задан' ? '🔑 Укажи HA_TOKEN в .env' : '🏠 Home Assistant недоступен'}</div>`;
+      _haStatesCache = [];
+      updateHAStats([]);
+      el('haStartBtn').style.display = '';
+    }
+  } catch(e) {
+    si.textContent = '⚠️';
+    sc.className = 'ha-status-card off';
+    st.textContent = 'Home Assistant';
+    ss.textContent = 'ошибка подключения';
+    container.innerHTML = `<div class="files-empty">🚫 ${e.message}</div>`;
+    _haStatesCache = [];
+    updateHAStats([]);
+    el('haStartBtn').style.display = '';
+  }
+}
+
+async function toggleHAEntity(domain, entityId) {
+  const btn = el('hatog-' + entityId);
+  if (!btn || btn.classList.contains('loading')) return;
+  btn.classList.add('loading');
+  btn.textContent = '⋯';
+  try {
+    const r = await fetch('/api/ha/service', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({domain, service:'toggle', entity_id:entityId}),
+      signal: AbortSignal.timeout(8000),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setTimeout(refreshHAEntities, 800);
+    } else {
+      toast('HA: ' + (d.error || 'ошибка'), 3000);
+      btn.classList.remove('loading');
+      refreshHAEntities();
+    }
+  } catch(e) {
+    toast('HA: ' + e.message, 3000);
+    btn.classList.remove('loading');
+    refreshHAEntities();
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -1211,7 +1671,7 @@ async function refreshBrain() {
   txt('bTotal', '…'); txt('bOnline', '…'); txt('bOffline', '…');
 
   // Nodes
-  fetch('http://localhost:5010/brain/nodes', {
+  fetch('/api/nodes', {
     cache: 'no-store', signal: AbortSignal.timeout(4000)
   }).then(r => r.json()).then(d => {
     txt('bTotal',   d.total   ?? 0);
@@ -1232,7 +1692,7 @@ async function refreshBrain() {
     }).join('');
     el('bRows').innerHTML = rows ||
       '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Нет узлов</td></tr>';
-    dot('bApiDot', 'g'); txt('bApiTxt', 'Brain API :5010');
+    dot('bApiDot', 'g'); txt('bApiTxt', 'Brain API /api');
     txt('bApiStatus', 'online · ' + new Date().toLocaleTimeString('ru-RU'));
     dot('sbBrainDot', 'g'); txt('sbBrainTxt', 'ON');
     el('brainPill').className = 'pill g';
@@ -1249,7 +1709,7 @@ async function refreshBrain() {
   });
 
   // Health
-  fetch('http://localhost:5010/health', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
+  fetch('/api/health', {cache: 'no-store', signal: AbortSignal.timeout(3000)})
     .then(r => r.json())
     .then(d => {
       dot('shBrain', 'g');
@@ -1429,7 +1889,7 @@ async function fetchOllama(port) {
 async function refreshP2P() {
   fetchOllama(11434); fetchOllama(11435); fetchOllama(11436);
 
-  fetch('http://localhost:5010/brain/nodes', {cache: 'no-store', signal: AbortSignal.timeout(4000)})
+  fetch('/api/nodes', {cache: 'no-store', signal: AbortSignal.timeout(4000)})
     .then(r => r.json()).then(d => {
       el('p2pRows').innerHTML = (d.nodes || []).map(n => {
         const st   = n.status === 'online' ? 'ok' : 'off';
@@ -1526,7 +1986,7 @@ function appendLog(text) {
 
 async function fetchLogs() {
   const src  = el('logSrc').value;
-  const urls = {brain: 'http://localhost:5010/api/logs', status: 'http://localhost:5010/brain/status', server: '/api/logs'};
+  const urls = {brain: '/api/logs', status: '/api/status', server: '/api/logs'};
   try {
     const r = await fetch(urls[src] || urls.brain, {cache: 'no-store', signal: AbortSignal.timeout(3000)});
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1895,6 +2355,7 @@ setInterval(() => {
   if (_curTab === 'metrics') fetchMetrics();
   if (_curTab === 'p2p')     refreshP2P();
   if (_curTab === 'vms')     refreshVMs();
+  if (_curTab === 'ha')      refreshHAEntities();
 }, 10000);
 
 // ── Boot ──────────────────────────────────────────────────────

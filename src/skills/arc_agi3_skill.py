@@ -302,6 +302,18 @@ class ARC3Agent:
         except Exception as e:
             return f"❌ Ошибка LLM-анализа: {e}"
 
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status", "arc", "arc статус"):
+            return self.status()
+        # Пробуем маршрутизировать через module-level handle()
+        result = handle(t, core=self.core)
+        if result is not None:
+            return result
+        # Без триггера — показываем статус
+        return self.status()
+
 
 # ── Синглтон и handle() ───────────────────────────────────────────────────────
 _agent: Optional[ARC3Agent] = None

@@ -21,7 +21,7 @@
 ### Шаг 1 — Клонировать
 
 ```bash
-git clone https://github.com/iliyaqdrwalqu/Argoss.git
+git clone https://github.com/labuaqlysnecy/Argos.git
 cd SiGtRiP
 ```
 
@@ -77,7 +77,7 @@ python main.py              # запустить с Desktop GUI
 Самый быстрый способ — без Python на хосте.
 
 ```bash
-git clone https://github.com/iliyaqdrwalqu/Argoss.git
+git clone https://github.com/labuaqlysnecy/Argos.git
 cd SiGtRiP
 cp .env.example .env
 # Отредактировать .env
@@ -92,14 +92,14 @@ docker-compose logs -f argos_node
 **Или через GHCR (готовый образ):**
 
 ```bash
-docker pull ghcr.io/iliyaqdrwalqu/sigtrip:2.0.0
+docker pull ghcr.io/labuaqlysnecy/Argos:2.0.0
 docker run -d \
   --name argos \
   --env-file .env \
   -p 8080:8080 \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/data:/app/data \
-  ghcr.io/iliyaqdrwalqu/sigtrip:2.0.0
+  ghcr.io/labuaqlysnecy/Argos:2.0.0
 ```
 
 ---
@@ -127,8 +127,8 @@ python main.py --no-gui
 
 ## 4. Android APK
 
-1. Скачай APK из [последнего релиза](https://github.com/iliyaqdrwalqu/Argoss/releases/latest)
-   или из [Actions → Android APK](https://github.com/iliyaqdrwalqu/Argoss/actions)
+1. Скачай APK из [последнего релиза](https://github.com/labuaqlysnecy/Argos/releases/latest)
+   или из [Actions → Android APK](https://github.com/labuaqlysnecy/Argos/actions)
 2. Установи, разреши «Установку из неизвестных источников»
 3. В настройках приложения укажи:
    - **Server URL**: адрес твоего Аргоса (или Google Colab туннель)
@@ -136,7 +136,7 @@ python main.py --no-gui
 4. Нажми **Обновить** на вкладке Dashboard
 
 **Нет сервера?** Запусти в Google Colab за 3 минуты →
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iliyaqdrwalqu/Argoss/blob/main/colab/ARGOS_Colab_Launch.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/labuaqlysnecy/Argos/blob/main/colab/ARGOS_Colab_Launch.ipynb)
 
 ---
 

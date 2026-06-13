@@ -20,6 +20,8 @@ desktop_actions.py — Управление ПК через Telegram (мышь, 
 
 from __future__ import annotations
 
+SKILL_DESCRIPTION = "Управление ПК: мышь, клавиатура, скриншот"
+
 import os
 import sys
 import re
@@ -174,6 +176,17 @@ class DesktopActionsSkill:
             "  мышь позиция"
         )
 
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status", "помощь", "help"):
+            ic = self._controller()
+            if ic is None:
+                return self._no_pyautogui()
+            pos = ic.position()
+            return f"🖥️ DesktopActions: активен\n  Позиция мыши: {pos}\n  Команды: мышь, клавиша, печатай, скриншот"
+        return self.handle(t) or f"❓ Неизвестная команда desktop: {t[:50]}"
+
     @staticmethod
     def _no_pyautogui() -> str:
         return (
@@ -198,7 +211,7 @@ def handle(text: str, core=None) -> str | None:
     if not any(tr in t for tr in TRIGGERS):
         return None
     if _skill_instance is None:
-        _skill_instance = DesktopController()
+        _skill_instance = DesktopActionsSkill(core=core)
     return _skill_instance.handle(text) or None
 
 

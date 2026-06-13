@@ -11,6 +11,8 @@ esp32_usb_bridge.py — ARGOS ↔ ESP32/RP2350 USB мост реального �
   • MicroPython REPL / mpremote для RP2350-GEEK
 """
 
+SKILL_DESCRIPTION = "USB-мост для ESP32: прошивка и serial-команды"
+
 import threading
 import time
 import json
@@ -44,9 +46,15 @@ STATUS_INTERVAL = 2.0       # сек между отправкой статус�
 ARGOS_DEVICE    = "ARGOS-ESP32-2432S024"
 DEFAULT_AP_IP   = "192.168.4.1"
 
+
+def _disabled_ports() -> set[str]:
+    raw = os.getenv("ARGOS_ESP32_DISABLED_PORTS", "")
+    return {p.strip().upper() for p in raw.split(",") if p.strip()}
+
 # VID/PID таблица: устройство → тип
 _DEVICE_VID_MAP = {
     # ESP32 / CH340 / CP210x / FTDI
+    (0x303A, 0x1001): "esp32",   # Espressif USB JTAG/Serial CDC (ESP32-S3)
     (0x1A86, 0x7523): "esp32",   # CH340
     (0x1A86, 0x55D4): "esp32",   # CH9102 (ESP32-S3, C3)
     (0x10C4, 0xEA60): "esp32",   # CP2102
@@ -76,8 +84,9 @@ class ESP32UsbBridge:
     """Двунаправленный USB-мост ARGOS ↔ ESP32-2432S024 / RP2350-GEEK."""
 
     def __init__(self, core=None, port: str = None):
+        env_port = (os.getenv("ARGOS_ESP32_PORT") or os.getenv("XIAOZHI_ESP32_PORT") or "").strip()
         self.core       = core
-        self.port       = port
+        self.port       = port or env_port or None
         self._ser       = None
         self._running   = False
         self._lock      = threading.Lock()
@@ -86,21 +95,27 @@ class ESP32UsbBridge:
         self._thread_rx = None
         self._thread_tx = None
         self._device_type = "esp32"   # "esp32" | "rp2350" | "rp2040"
+        self._last_io_error = ""
 
     # ── Управление ──────────────────────────────────────────────────────
     def start(self) -> str:
         if not _SERIAL_OK:
             return "❌ pyserial не установлен: pip install pyserial --break-system-packages"
+        if self._ser and self._ser.is_open and self._running:
+            return self.status()
         port, dev_type = self.port, self._device_type
         if not port:
             port, dev_type = self._autodetect()
         if not port:
             return "❌ ARGOS-устройство не найдено. Подключи ESP32 или RP2350 по USB."
+        if port.upper() in _disabled_ports():
+            return f"⛔ USB мост не трогает {port}: порт зарезервирован для Xiaozhi Wi-Fi/OTA."
         try:
             baud = BAUD_RATE_RP if dev_type in ("rp2350", "rp2040", "stm32h503") else BAUD_RATE
-            self._ser = serial.Serial(port, baud, timeout=1)
+            self._ser = serial.Serial(port, baud, timeout=1, write_timeout=1)
             self._device_type = dev_type
             self._running = True
+            self._last_io_error = ""
             self._thread_rx = threading.Thread(target=self._rx_loop,  daemon=True, name="argos-rx")
             self._thread_tx = threading.Thread(target=self._tx_loop,  daemon=True, name="argos-tx")
             self._thread_rx.start()
@@ -126,12 +141,24 @@ class ESP32UsbBridge:
                     f"AP: {self._ap_ssid} ({self._ap_ip})")
         return f"✅ {dev} мост активен | порт: {self._ser.port}"
 
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status"):
+            return self.status()
+        result = handle(t)
+        if result is not None:
+            return result
+        return self.status()
+
     # ── Авто-определение порта ───────────────────────────────────────────
     def _autodetect(self) -> tuple[str | None, str]:
         """Ищет первый ARGOS-совместимый порт. Возвращает (port, device_type)."""
         if not _SERIAL_OK:
             return None, "esp32"
         for p in serial.tools.list_ports.comports():
+            if (p.device or "").upper() in _disabled_ports():
+                continue
             key = (p.vid, p.pid)
             if key in _DEVICE_VID_MAP:
                 dev_type = _DEVICE_VID_MAP[key]
@@ -139,6 +166,8 @@ class ESP32UsbBridge:
                 return p.device, dev_type
         # Fallback: CH340/CP210x/FTDI без точного PID
         for p in serial.tools.list_ports.comports():
+            if (p.device or "").upper() in _disabled_ports():
+                continue
             vid = p.vid or 0
             if vid in {0x1A86, 0x10C4, 0x0403, 0x067B, 0x239A}:
                 log.info("Найден ESP32 порт (fallback): %s", p.device)
@@ -150,9 +179,34 @@ class ESP32UsbBridge:
                 log.info("Найден STM32 порт (fallback): %s", p.device)
                 return p.device, "stm32h503"
         ports = list(serial.tools.list_ports.comports())
-        if ports:
-            return ports[0].device, "esp32"
+        if ports and os.getenv("ARGOS_SERIAL_ALLOW_UNKNOWN", "0").lower() in {"1", "true", "yes", "on"}:
+            for p in ports:
+                if (p.device or "").upper() in _disabled_ports():
+                    continue
+                if (p.device or "").upper() != "COM1":
+                    return p.device, "esp32"
         return None, "esp32"
+
+    def _handle_serial_io_error(self, where: str, exc: Exception) -> bool:
+        winerror = getattr(exc, "winerror", None)
+        errno = getattr(exc, "errno", None)
+        is_access_error = isinstance(exc, PermissionError) or winerror == 5 or errno in {5, 13}
+        if not is_access_error:
+            log.error("%s ошибка: %s", where, exc)
+            return False
+
+        port = getattr(self._ser, "port", self.port or "?")
+        msg = f"{where} access denied on {port}: {exc}"
+        if msg != self._last_io_error:
+            log.error("%s. Останавливаю ESP32 USB мост, чтобы не спамить лог.", msg)
+            self._last_io_error = msg
+        self._running = False
+        try:
+            if self._ser and self._ser.is_open:
+                self._ser.close()
+        except Exception:
+            pass
+        return True
 
     # ── Приём данных от ESP32 ────────────────────────────────────────────
     def _rx_loop(self):
@@ -166,7 +220,8 @@ class ESP32UsbBridge:
                 else:
                     time.sleep(0.05)
             except Exception as e:
-                log.error("RX ошибка: %s", e)
+                if self._handle_serial_io_error("RX", e):
+                    break
                 time.sleep(1)
 
     def _register_in_iot_hub(self, fw: str = "?"):
@@ -318,7 +373,7 @@ class ESP32UsbBridge:
             with self._lock:
                 self._ser.write(line.encode("utf-8"))
         except Exception as e:
-            log.error("TX ошибка: %s", e)
+            self._handle_serial_io_error("TX", e)
 
     # ── OTA: обновление прошивки ESP32 через Wi-Fi AP ──────────────────
     def ota_update(self, firmware_path: str) -> str:

@@ -24,7 +24,7 @@ from src.connectivity.redis_bus import RedisBus
 P2P_PORT = int(os.getenv("ARGOS_P2P_PORT", "55771"))  # Порт для P2P связи
 BROADCAST_PORT = int(os.getenv("ARGOS_P2P_BROADCAST_PORT", "55772"))  # Порт для UDP-обнаружения
 HEARTBEAT_SEC = 15  # Пульс каждые N секунд
-NODE_TIMEOUT = 45  # Нода считается мёртвой через N секунд
+NODE_TIMEOUT = 300  # Нода считается мёртвой через N секунд (5 мин)
 VERSION = "1.0.0"
 NETWORK_SECRET = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
 UDP_SOCKET_TIMEOUT = 0.1  # Таймаут recvfrom — держит цикл отзывчивым
@@ -216,7 +216,8 @@ class NodeRegistry:
 
         if master:
             is_master = master["node_id"] == self_profile["node_id"]
-            lines.append(f"\n👑 МАСТЕР: {'ЭТА НОДА ✅' if is_master else master['hostname']}")
+            master_name = master.get("hostname") or master.get("node_id") or "unknown"
+            lines.append(f"\n👑 МАСТЕР: {'ЭТА НОДА ✅' if is_master else master_name}")
 
         if nodes:
             lines.append(f"\n📡 СОСЕДНИЕ НОДЫ:")
@@ -224,7 +225,7 @@ class NodeRegistry:
                 age = n.get("age_days", 0)
                 pw = n.get("power", {}).get("index", 0)
                 auth = n.get("authority", 0)
-                host = n.get("hostname", "unknown")
+                host = n.get("hostname") or n.get("node_id") or "unknown"
                 addr = n.get("addr", "?")
                 sk = len(n.get("skills", []))
                 lines.append(
@@ -321,12 +322,23 @@ class TaskDistributor:
 
         if decision["is_local"]:
             if core:
-                res = (
-                    core._ask_gemini("Ты Аргос.", prompt)
-                    or core._ask_ollama("Ты Аргос.", prompt)
-                    or "Нет ответа от ИИ."
-                )
-                return f"[LOCAL:{resolved_type}] {res}"
+                # Используем правильную цепочку провайдеров, не хардкодим Gemini/Ollama
+                res = None
+                system = "Ты Аргос — автономная AI-система."
+                for _fn in [
+                    lambda: core._ask_openai_compat(system, prompt, provider_name="DeepSeek"),
+                    lambda: core._ask_openai_compat(system, prompt, provider_name="Groq"),
+                    lambda: core._ask_openai_compat(system, prompt, provider_name="Kimi"),
+                    lambda: core._ask_openai_compat(system, prompt, provider_name="Cloudflare"),
+                    lambda: core._ask_openai_compat(system, prompt, provider_name="OpenAI"),
+                ]:
+                    try:
+                        res = _fn()
+                        if res and res.strip():
+                            break
+                    except Exception:
+                        continue
+                return f"[LOCAL:{resolved_type}] {res or 'Нет ответа от ИИ.'}"
             return "[LOCAL] Ядро не подключено."
 
         # Запрос к удалённой ноде через TCP JSON протокол
@@ -345,6 +357,7 @@ class TaskDistributor:
                     }
                 ).encode()
             )
+            sock.shutdown(socket.SHUT_WR)
             raw = sock.recv(65536)
             sock.close()
             data = json.loads(raw.decode() or "{}")
@@ -441,6 +454,8 @@ class ArgosBridge:
                 args=(peers_raw,),
                 daemon=True,
             ).start()
+        # ── HTTP peer discovery (brain API + HTTP peers) ────────
+        threading.Thread(target=self._http_discovery_loop, daemon=True).start()
         return (
             f"🌐 P2P-мост запущен\n"
             f"   IP:       {self._local_ip}:{P2P_PORT}\n"
@@ -561,9 +576,24 @@ class ArgosBridge:
                 pass
         srv.close()
 
+    @staticmethod
+    def _recv_all(conn: socket.socket, timeout: float = 30.0) -> bytes:
+        """Читает все данные из сокета до закрытия соединения (поддержка больших файлов)."""
+        conn.settimeout(timeout)
+        chunks: list[bytes] = []
+        try:
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except socket.timeout:
+            pass
+        return b"".join(chunks)
+
     def _handle_client(self, conn: socket.socket, addr: str):
         try:
-            raw = conn.recv(65536)
+            raw = self._recv_all(conn)
             msg = json.loads(raw.decode())
 
             # Проверка секрета — поддерживает и ГОСТ-подпись, и plain secret
@@ -584,11 +614,23 @@ class ArgosBridge:
             if action == "query":
                 prompt = msg.get("prompt", "")
                 if self.core:
-                    answer = (
-                        self.core._ask_gemini("Ты Аргос.", prompt)
-                        or self.core._ask_ollama("Ты Аргос.", prompt)
-                        or "Нет ответа от ИИ."
-                    )
+                    # Используем рабочую цепочку провайдеров (не хардкодим Gemini/Ollama)
+                    answer = None
+                    system = "Ты Аргос — автономная AI-система."
+                    for _fn in [
+                        lambda: self.core._ask_openai_compat(system, prompt, provider_name="DeepSeek"),
+                        lambda: self.core._ask_openai_compat(system, prompt, provider_name="Groq"),
+                        lambda: self.core._ask_openai_compat(system, prompt, provider_name="Kimi"),
+                        lambda: self.core._ask_openai_compat(system, prompt, provider_name="Cloudflare"),
+                        lambda: self.core._ask_openai_compat(system, prompt, provider_name="OpenAI"),
+                    ]:
+                        try:
+                            answer = _fn()
+                            if answer and answer.strip():
+                                break
+                        except Exception:
+                            continue
+                    answer = answer or "Нет ответа от ИИ."
                 else:
                     answer = "Ядро не подключено на этой ноде."
                 conn.sendall(
@@ -616,6 +658,23 @@ class ArgosBridge:
                 else:
                     conn.sendall(json.dumps({"error": "Skill not found"}).encode())
 
+            elif action == "push_file":
+                # Принимаем файл от другой ноды и сохраняем локально
+                rel_path = msg.get("path", "")
+                code = msg.get("code", "")
+                # Защита от path traversal
+                if not rel_path or ".." in rel_path or rel_path.startswith("/") or ":" in rel_path:
+                    conn.sendall(json.dumps({"error": "Invalid path"}).encode())
+                else:
+                    try:
+                        full_path = rel_path
+                        os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
+                        with open(full_path, "w", encoding="utf-8") as fh:
+                            fh.write(code)
+                        conn.sendall(json.dumps({"ok": True, "path": rel_path}).encode())
+                    except Exception as e:
+                        conn.sendall(json.dumps({"error": str(e)}).encode())
+
             elif action == "status":
                 conn.sendall(json.dumps(self.profile.to_dict()).encode())
 
@@ -628,6 +687,50 @@ class ArgosBridge:
             conn.close()
 
     # ── ПУЛЬС — периодические задачи ─────────────────────
+    def _http_discovery_loop(self):
+        """HTTP peer discovery: опрашивает brain API и HTTP peers каждые 60 сек."""
+        import urllib.request
+        while self._running:
+            try:
+                # 1. Brain API ноды
+                brain_url = os.getenv("ARGOS_BRAIN_API_URL", "http://localhost:5001")
+                try:
+                    req = urllib.request.Request(f"{brain_url}/brain/nodes", headers={})
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        data = json.loads(r.read().decode())
+                        for n in data.get("nodes", []):
+                            if n.get("status") == "online" and n.get("node_id") != self.profile.node_id:
+                                addr = n.get("address", "").split(":")[0]
+                                profile = {
+                                    "node_id": n["node_id"],
+                                    "role": "cloud" if "railway" in addr or "run.app" in addr else "server",
+                                    "skills": n.get("capabilities", []),
+                                    "power": {},
+                                    "ts": time.time(),
+                                }
+                                self.registry.update(profile, addr=addr)
+                except Exception:
+                    pass
+                # 2. HTTP peers из .env
+                http_peers = os.getenv("ARGOS_P2P_HTTP_PEERS", "")
+                for peer_url in [p.strip() for p in http_peers.split(",") if p.strip()]:
+                    try:
+                        peer_url = peer_url.rstrip("/")
+                        req = urllib.request.Request(f"{peer_url}/health", headers={})
+                        with urllib.request.urlopen(req, timeout=5) as r:
+                            info = json.loads(r.read().decode())
+                            nid = info.get("node", peer_url.split("//")[-1].split(".")[0])
+                            addr = peer_url.replace("https://", "").replace("http://", "").split("/")[0]
+                            self.registry.update({
+                                "node_id": nid, "role": "cloud", "skills": ["mcp"],
+                                "power": {}, "ts": time.time(),
+                            }, addr=addr)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(60)
+
     def _heartbeat_loop(self):
         while self._running:
             time.sleep(HEARTBEAT_SEC)
@@ -637,8 +740,10 @@ class ArgosBridge:
     def _redis_heartbeat_loop(self):
         while self._running and self.redis_bus:
             try:
+                # Включаем IP чтобы соседние ноды могли подключаться к нам через TCP
+                profile_dict = {**self.profile.to_dict(), "ip": self._local_ip}
                 payload = {
-                    "profile": self.profile.to_dict(),
+                    "profile": profile_dict,
                     "ts": time.time(),
                 }
                 self.redis_bus.publish("state", payload)
@@ -656,11 +761,111 @@ class ArgosBridge:
                     "power": obj.get("power", {}),
                     "skills": obj.get("skills", []),
                     "age_days": obj.get("age_days", 0),
+                    "ip": obj.get("ip", ""),
                 }
+            # Игнорируем собственные Redis-heartbeat (иначе нода дублирует себя как сосед)
+            if profile.get("node_id") == self.profile.node_id:
+                return
             profile["ts"] = obj.get("ts", time.time())
-            self.registry.update(profile, addr=str(profile.get("node_id", "redis")))
+            # Используем реальный IP если он есть в профиле, иначе node_id как fallback
+            addr = profile.get("ip") or str(profile.get("node_id", "redis"))
+            self.registry.update(profile, addr=addr)
         except Exception:
             pass
+
+    def push_files_to_network(self, paths: list[str]) -> str:
+        """Отправляет список файлов на все известные ноды сети.
+
+        Args:
+            paths: относительные пути к файлам (например ['src/skills/pip_manager.py'])
+
+        Использование: p2p деплой src/skills/pip_manager.py
+        """
+        nodes = self.registry.all()
+        if not nodes:
+            # Авто-переподключение к статическим пирам если реестр пуст
+            peers_raw = os.getenv("ARGOS_P2P_PEERS", "")
+            if peers_raw:
+                import re as _re2
+                for entry in peers_raw.split(","):
+                    m = _re2.search(r"(\d{1,3}(?:\.\d{1,3}){3})", entry.strip())
+                    if m:
+                        try:
+                            self.connect_to(m.group(1))
+                        except Exception:
+                            pass
+                nodes = self.registry.all()
+            if not nodes:
+                return "⚠️ Нет активных нод для обновления (добавьте IPs в ARGOS_P2P_PEERS)."
+
+        results = []
+        for path in paths:
+            if not os.path.exists(path):
+                results.append(f"  ❌ Файл не найден: {path}")
+                continue
+            try:
+                code = open(path, encoding="utf-8").read()
+            except Exception as e:
+                results.append(f"  ❌ Чтение {path}: {e}")
+                continue
+
+            ok_nodes, fail_nodes = [], []
+            for node in nodes:
+                # addr может быть IP (UDP/TCP discovery) или UUID (старый Redis)
+                # ip поле имеет приоритет если задано
+                addr = node.get("ip") or node.get("addr")
+                if not addr or addr == self._local_ip:
+                    continue
+                # Проверяем что addr — реальный IP (не UUID)
+                import re as _re
+                if not _re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", str(addr)):
+                    # Не IP — пропускаем (нет маршрута к этой ноде через TCP)
+                    fail_nodes.append(f"{node.get('hostname', addr)}: нет IP (нода знает только UUID)")
+                    continue
+                try:
+                    sock = socket.socket()
+                    sock.settimeout(15)
+                    sock.connect((addr, P2P_PORT))
+                    payload = json.dumps({
+                        "action": "push_file",
+                        "path": path,
+                        "code": code,
+                        "secret": NETWORK_SECRET,
+                    }).encode()
+                    sock.sendall(payload)
+                    # Сигнализируем серверу что данные закончились (половинное закрытие)
+                    sock.shutdown(socket.SHUT_WR)
+                    raw = sock.recv(4096)
+                    sock.close()
+                    resp = json.loads(raw.decode() or "{}")
+                    if resp.get("ok"):
+                        ok_nodes.append(node.get("hostname", addr))
+                    else:
+                        fail_nodes.append(f"{node.get('hostname', addr)}: {resp.get('error', '?')}")
+                except Exception as e:
+                    fail_nodes.append(f"{node.get('hostname', addr)}: {e}")
+
+            status = "✅" if not fail_nodes else ("⚠️" if ok_nodes else "❌")
+            line = f"  {status} {path}"
+            if ok_nodes:
+                line += f" → {', '.join(ok_nodes)}"
+            if fail_nodes:
+                line += f" | ❌ {'; '.join(fail_nodes)}"
+            results.append(line)
+
+        header = f"📡 P2P ДЕПЛОЙ ({len(paths)} файлов → {len(nodes)} нод):"
+        return header + "\n" + "\n".join(results)
+
+    def deploy_all_skills(self) -> str:
+        """Отправляет все файлы навыков на все ноды сети."""
+        skill_paths = []
+        for root, _dirs, files in os.walk("src/skills"):
+            for fname in files:
+                if fname.endswith(".py") and not fname.startswith("__"):
+                    skill_paths.append(os.path.join(root, fname).replace("\\", "/"))
+        if not skill_paths:
+            return "❌ Навыки не найдены в src/skills/"
+        return self.push_files_to_network(skill_paths)
 
     # ── ПУБЛИЧНЫЙ API ─────────────────────────────────────
     def network_status(self) -> str:
@@ -670,37 +875,55 @@ class ArgosBridge:
         """Отправляет AI-запрос на наиболее мощную ноду в сети."""
         return self.distributor.route_task(prompt, self.core, task_type=task_type)
 
-    def sync_skills_from_network(self) -> str:
+    def sync_skills_from_network(self, max_seconds: float | None = None, max_nodes: int | None = None) -> str:
         """Загружает навыки от всех нод в сети."""
+        try:
+            self.registry.remove_dead()
+        except Exception:
+            pass
         nodes = self.registry.all()
         synced = []
         errors = []
+        skipped = []
+        max_seconds = float(max_seconds or os.getenv("ARGOS_P2P_SYNC_MAX_SECONDS", "15"))
+        max_nodes = int(max_nodes or os.getenv("ARGOS_P2P_SYNC_MAX_NODES", "8"))
+        deadline = time.monotonic() + max(1.0, max_seconds)
+        my_skills = set(self.profile.get_skills())
 
-        for node in nodes:
+        for node in nodes[:max_nodes]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                skipped.append("time budget exhausted")
+                break
             addr = node.get("addr")
             if not addr:
+                skipped.append(f"{node.get('hostname') or node.get('node_id') or 'unknown'}: no addr")
                 continue
+            node_name = node.get("hostname") or node.get("node_id") or addr
             try:
                 # 1. Получаем список навыков удалённой ноды
                 sock = socket.socket()
-                sock.settimeout(5)
+                sock.settimeout(max(0.5, min(3.0, remaining)))
                 sock.connect((addr, P2P_PORT))
                 sock.sendall(
                     json.dumps({"action": "sync_skills", "secret": NETWORK_SECRET}).encode()
                 )
+                sock.shutdown(socket.SHUT_WR)
                 raw = sock.recv(65536)
                 sock.close()
                 remote = json.loads(raw).get("skills", [])
 
-                my_skills = set(self.profile.get_skills())
-
                 # 2. Загружаем отсутствующие навыки
                 for skill in remote:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        skipped.append("time budget exhausted during skill fetch")
+                        break
                     if skill in my_skills or skill == "evolution":
                         continue
                     try:
                         s2 = socket.socket()
-                        s2.settimeout(8)
+                        s2.settimeout(max(0.5, min(4.0, remaining)))
                         s2.connect((addr, P2P_PORT))
                         s2.sendall(
                             json.dumps(
@@ -711,6 +934,7 @@ class ArgosBridge:
                                 }
                             ).encode()
                         )
+                        s2.shutdown(socket.SHUT_WR)
                         data = json.loads(s2.recv(65536))
                         s2.close()
 
@@ -718,14 +942,16 @@ class ArgosBridge:
                             path = f"src/skills/{skill}.py"
                             with open(path, "w", encoding="utf-8") as f:
                                 f.write(data["code"])
-                            synced.append(f"{skill} ← {node['hostname']}")
+                            synced.append(f"{skill} ← {node_name}")
+                            my_skills.add(skill)
                     except Exception as e:
                         errors.append(f"{skill}: {e}")
 
             except Exception as e:
-                errors.append(f"{node.get('hostname', addr)}: {e}")
+                errors.append(f"{node_name}: {e}")
 
         result = [f"🔄 СИНХРОНИЗАЦИЯ НАВЫКОВ:"]
+        result.append(f"  Нод проверено: {min(len(nodes), max_nodes)}/{len(nodes)}")
         if synced:
             result.append(f"  Загружено: {len(synced)}")
             for s in synced:
@@ -734,6 +960,12 @@ class ArgosBridge:
             result.append("  Нет новых навыков для загрузки.")
         if errors:
             result.append(f"  Ошибки: {len(errors)}")
+            for err in errors[:6]:
+                result.append(f"    ⚠️ {err}")
+        if skipped:
+            result.append(f"  Пропущено: {len(skipped)}")
+            for item in skipped[:6]:
+                result.append(f"    ⏭️ {item}")
         return "\n".join(result)
 
     def connect_to(self, ip: str) -> str:
@@ -750,8 +982,12 @@ class ArgosBridge:
                     }
                 ).encode()
             )
+            sock.shutdown(socket.SHUT_WR)
             data = json.loads(sock.recv(65536))
             sock.close()
+            # Не добавляем самих себя в реестр соседей
+            if data.get("node_id") == self.profile.node_id:
+                return f"ℹ️ {ip} — это текущая нода (пропускаем регистрацию в реестре)"
             self.registry.update(data, ip)
             return (
                 f"✅ Подключён к ноде:\n"

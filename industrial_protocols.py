@@ -13,6 +13,7 @@ Graceful degradation: работает без внешних библиотек 
 from __future__ import annotations
 
 import os
+import re
 import socket
 import struct
 import threading
@@ -235,7 +236,7 @@ class LonWorksBridge:
     Поддержка: UDP/IP канал (IP-852), обнаружение нод, чтение NV.
     """
 
-    LON_IP_PORT = int(os.getenv("ARGOS_LON_PORT", "1628"))  # ISO/IEC 14908-4
+    LON_IP_PORT = int(re.sub(r"\D", "", os.getenv("ARGOS_LON_PORT") or "") or "1628")  # ISO/IEC 14908-4
 
     def __init__(self):
         self._devices:  Dict[str, IndustrialDevice] = {}

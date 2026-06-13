@@ -1,108 +1,220 @@
-version: "3.9"
+version: '3.8'
 
 services:
-  argos:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: argos-universal:2.1.0
-    container_name: argos_core
-    restart: unless-stopped
-    env_file: .env
+  # ==========================================
+  # HOME ASSISTANT
+  # ==========================================
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:latest
+    container_name: homeassistant
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./ha-config:/config
+      - /etc/localtime:/etc/localtime:ro
     environment:
-      ARGOS_NO_GUI: "1"
-      ARGOS_LOG_LEVEL: "INFO"
-      OLLAMA_HOST: "http://host.docker.internal:11434"
-      MQTT_HOST: "mosquitto"
-      MQTT_PORT: "1883"
-    ports:
-      - "8080:8080"
-      - "7070:7070"
-      - "7071:7071/udp"
-    volumes:
-      - argos_data:/app/data
-      - argos_logs:/app/logs
-      - argos_config:/app/config
-      - ~/.ollama:/root/.ollama:ro
-      - /sys/class/gpio:/sys/class/gpio
-      - /sys/bus/w1:/sys/bus/w1:ro
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
-      - /dev/ttyUSB1:/dev/ttyUSB1
-      - /dev/ttyS0:/dev/ttyS0
-      - /dev/ttyS3:/dev/ttyS3
-      - /dev/i2c-0:/dev/i2c-0
-      - /dev/i2c-1:/dev/i2c-1
-    group_add:
-      - dialout
-      - i2c
-      - audio
-    cap_add:
-      - SYS_RAWIO
+      - TZ=Europe/Moscow
     networks:
-      - argos_net
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import psutil; psutil.cpu_percent()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "4.0"
-          memory: 4G
-
-  mosquitto:
-    image: eclipse-mosquitto:2.0
-    container_name: argos_mqtt
+      - argos_integration
     restart: unless-stopped
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - mosquitto_data:/mosquitto/data
-      - mosquitto_logs:/mosquitto/log
-    networks:
-      - argos_net
-    healthcheck:
-      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "hc", "-W", "3"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    depends_on:
+      - argos_api_gateway
 
+  # ==========================================
+  # REST API GATEWAY
+  # ==========================================
+  argos_api_gateway:
+    image: python:3.11-slim
+    container_name: argos_api_gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src/argos_api_gateway.py:/app/api_gateway.py
+    working_dir: /app
+    command: |
+      bash -c "pip install fastapi uvicorn psutil && python api_gateway.py"
+    environment:
+      - API_PORT=8000
+      - API_HOST=0.0.0.0
+    networks:
+      - argos_integration
+    restart: unless-stopped
+    depends_on:
+      - argos_mcp_server
+
+  # ==========================================
+  # MCP SERVER
+  # ==========================================
+  argos_mcp_server:
+    image: python:3.11-slim
+    container_name: argos_mcp_server
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./src/mcp_argos_server.py:/app/mcp_server.py
+    working_dir: /app
+    command: |
+      bash -c "pip install fastapi uvicorn aiohttp psutil && python mcp_server.py"
+    environment:
+      - ARGOS_PORT=8002
+      - ARGOS_HOST=0.0.0.0
+      - FPGA_PORT=8003
+      - VPN_PORT=8004
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # ACP BRIDGE
+  # ==========================================
+  argos_acp_bridge:
+    image: python:3.11-slim
+    container_name: argos_acp_bridge
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./src/argos_acp_bridge.py:/app/acp_bridge.py
+    working_dir: /app
+    command: |
+      bash -c "pip install fastapi uvicorn aiohttp && python acp_bridge.py"
+    environment:
+      - ARGOS_ACP_PORT=8005
+      - ARGOS_ACP_HOST=0.0.0.0
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # FPGA API
+  # ==========================================
+  fpga_api:
+    image: python:3.11-slim
+    container_name: fpga_api
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./src/fpga_api.py:/app/fpga_api.py
+    working_dir: /app
+    command: |
+      bash -c "pip install fastapi uvicorn psutil && python fpga_api.py"
+    environment:
+      - FPGA_PORT=8003
+      - FPGA_HOST=0.0.0.0
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # VPN API
+  # ==========================================
+  vpn_api:
+    image: python:3.11-slim
+    container_name: vpn_api
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./src/vpn_api.py:/app/vpn_api.py
+    working_dir: /app
+    command: |
+      bash -c "pip install fastapi uvicorn psutil && python vpn_api.py"
+    environment:
+      - VPN_PORT=8004
+      - VPN_HOST=0.0.0.0
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # POSTGRES DATABASE
+  # ==========================================
+  postgres:
+    image: postgres:15
+    container_name: argos_postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=argos
+      - POSTGRES_PASSWORD=argos_password
+      - POSTGRES_DB=argos_ai
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # REDIS CACHE
+  # ==========================================
   redis:
     image: redis:7-alpine
     container_name: argos_redis
-    restart: unless-stopped
-    command: redis-server --save 60 1 --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - argos_net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - argos_integration
+    restart: unless-stopped
 
-volumes:
-  argos_data:
-  argos_logs:
-  argos_config:
-  mosquitto_data:
-  mosquitto_logs:
-  redis_data:
+  # ==========================================
+  # PROMETHEUS (MONITORING)
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: argos_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - argos_integration
+    restart: unless-stopped
+
+  # ==========================================
+  # GRAFANA (DASHBOARD)
+  # ==========================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: argos_grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=grafana_password
+      - GF_INSTALL_PLUGINS=
+    networks:
+      - argos_integration
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # ==========================================
+  # LOKI (LOGGING)
+  # ==========================================
+  loki:
+    image: grafana/loki:latest
+    container_name: argos_loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+      - ./config/loki-config.yml:/etc/loki/local-config.yml
+    command:
+      - '-config.file=/etc/loki/local-config.yml'
+    networks:
+      - argos_integration
+    restart: unless-stopped
 
 networks:
-  argos_net:
+  argos_integration:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/24
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  loki_data:

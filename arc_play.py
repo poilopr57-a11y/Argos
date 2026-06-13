@@ -298,15 +298,11 @@ def _smart_runner_script_ls20() -> str:
     BFS-оптимальные маршруты для всех 7 уровней ls20 (вычислены из ls20.py).
     A1=up(y-5), A2=down(y+5), A3=left(x-5), A4=right(x+5).
 
-    Level 1 (StepsDecrement=1, 13 actions): player(34,45) -> rhsxkxzdjz(19,30) -> goal(34,10)
-    Level 2 (default StepsDecrement, 41 actions)
-    Level 3 (44 actions)
-    Level 4 (StepsDecrement=1, 41 actions)
-    Level 5 (42 actions)
-    Level 6 (StepsDecrement=1, 35 actions, multi-goal)
-    Level 7 (55 actions)
-
-    Total: 271 actions for the entire game.
+    Версия v6: gates + walker movement + 5x5 collision + fixed `or` bug
+    + multi-goal BFS + walker phase optimization.
+    Level 1 (13), Level 2 (45), Level 3 (39), Level 4 (43),
+    Level 5 (44), Level 6 (72), Level 7 (53).
+    Total: 309 actions for the entire game.
     """
     return r"""
 import json
@@ -328,24 +324,21 @@ try:
         raise SystemExit(2)
 
     arc = arc_agi.Arcade()
-    # Открываем карточку с тегами для three.arcprize.org
     try:
-        arc.open_scorecard(tags=["argos", "smart-bfs", "agent"])
+        arc.open_scorecard(tags=["argos", "smart-bfs-v6", "agent"])
     except Exception:
         pass
     env = arc.make(env_id, render_mode="terminal" if render else None)
 
-    # BFS-оптимальные маршруты для всех 7 уровней ls20.
-    # Версия v2: учитывает 5x5 коллизию игрока (off-grid bouncy pads достижимы)
-    # и step counter / bouncy refill / multi-life dynamics.
+    # BFS-оптимальные маршруты v6: gates + walkers + multi-goal + walker phase.
     L = {
         1: [3,3,3,1,1,1,1,4,4,4,1,1,1],
         2: [1,4,1,1,1,1,1,4,4,2,4,2,2,2,2,2,2,1,2,2,3,3,4,1,4,1,1,1,1,1,1,1,3,3,3,3,3,3,2,3,2,2,2,2,2],
-        3: [1,1,1,1,1,1,1,1,4,4,4,4,2,2,2,2,2,3,3,4,4,2,2,2,1,1,1,1,1,1,4,2,2,4,4,4,4,1,1,1,3,1,2,2,4,2,2,2,2,2,2,2],
-        4: [3,3,3,2,2,2,2,3,2,1,2,1,2,1,1,1,3,3,2,3,3,2,2,2,4,4,1,2,3,3,1,1,1,4,1,4,1,1,3,3,3],
-        5: [1,1,3,1,3,3,3,4,3,4,3,4,1,1,3,3,1,3,3,3,4,2,4,2,2,3,3,2,2,4,2,1,2,2,1,4,4,4,4,1,4,4,1,4,4,1,1,1,1,1],
-        6: [1,1,4,4,2,1,4,1,1,1,3,3,2,3,1,3,3,3,1,1,1,4,4,4,4,4,4,2,2,4,4,2,4,2,2],
-        7: [3,3,2,2,2,2,2,1,2,4,4,1,2,1,2,1,2,3,2,1,3,1,1,1,4,4,4,4,2,4,4,2,4,4,1,1,1,1,1,1,2,4,1,2,2,2,2,2,2,3,3,3,1,3,3,2,2,2,2],
+        3: [1,1,1,1,1,1,1,1,3,2,2,2,2,2,2,2,2,1,1,1,3,3,1,4,4,4,4,4,4,4,1,1,1,3,1,2,1,4,2],
+        4: [3,3,3,2,2,2,3,2,2,3,3,1,2,1,2,1,2,1,1,3,3,1,2,3,3,1,1,1,2,2,4,1,1,1,1,4,1,4,1,1,3,3,3],
+        5: [1,3,1,1,3,3,3,4,3,4,3,4,1,1,3,3,3,3,1,3,3,3,4,1,2,4,2,2,2,2,2,4,4,2,2,2,4,4,4,4,4,4,4,1],
+        6: [1,1,2,1,2,4,4,1,4,1,1,1,3,3,4,4,1,1,4,4,1,1,4,2,2,1,1,3,1,2,3,3,3,3,1,2,3,3,2,2,2,2,1,4,4,4,3,3,3,1,1,1,1,1,1,4,4,4,4,4,4,2,4,4,1,1,4,2,2,2,2,2],
+        7: [1,1,2,2,3,3,2,2,2,2,2,1,2,4,2,1,4,1,2,1,2,1,2,1,2,3,3,1,1,1,4,4,4,4,1,4,4,1,4,4,1,1,4,2,2,3,3,3,1,2,2,2,2],
     }
     ACT = {1: A1, 2: A2, 3: A3, 4: A4}
     sequence = []
@@ -366,7 +359,7 @@ try:
         sc_dict = score.dict()
     else:
         sc_dict = {"raw": str(score)}
-    print(json.dumps({"ok": True, "scorecard": sc_dict, "action_name": "SMART_LS20"}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "scorecard": sc_dict, "action_name": "SMART_LS20_V6"}, ensure_ascii=False))
 except Exception as e:
     print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 """

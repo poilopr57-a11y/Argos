@@ -10,6 +10,16 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
+from collections import Counter
+
+# ФИКС: загрузка .env — чтобы HA_URL/HA_TOKEN/ARGOS_WEB_PORT работали и при
+# автономном запуске (а не только когда web_server наследует окружение main.py).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except Exception:
+    pass
 
 try:
     import psutil
@@ -29,7 +39,11 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-BRAIN_API  = os.getenv("ARGOS_BRAIN_URL", "http://localhost:5010")
+BRAIN_API  = (
+    os.getenv("ARGOS_BRAIN_API_URL")
+    or os.getenv("ARGOS_BRAIN_URL")
+    or "http://127.0.0.1:5001"
+).rstrip("/")
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 PORT       = int(os.getenv("ARGOS_WEB_PORT", "18789"))
 
@@ -196,6 +210,260 @@ def _collect_metrics() -> dict:
 @app.route("/api/metrics")
 def metrics():
     return jsonify(_collect_metrics())
+
+
+# ── Devices · Home Assistant + реальные устройства ────────────────────────────
+
+import socket as _socket
+
+
+def _check_port(host: str, port: int, timeout: float = 1.2) -> bool:
+    try:
+        with _socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+_hw_cache: dict = {}
+_hw_ts: float = 0.0
+
+
+def _hw_devices() -> list:
+    """FPGA (PCI) + XGecu (USB) через PowerShell. Кеш 30с — опрос PnP медленный."""
+    global _hw_cache, _hw_ts
+    if time.time() - _hw_ts < 30 and _hw_cache:
+        return _hw_cache.get("list", [])
+    out: list = []
+    if sys.platform == "win32":
+        try:
+            ps = ("$f=Get-PnpDevice | ? {$_.InstanceId -like '*VEN_10EE*DEV_7022*'} | select -First 1;"
+                  "$x=Get-PnpDevice | ? {$_.InstanceId -like '*VID_A466*'} | select -First 1;"
+                  "Write-Output ('FPGA='+$f.Status); Write-Output ('XGECU='+$x.Status)")
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               capture_output=True, text=True, timeout=10)
+            txt = r.stdout or ""
+            out.append({"icon": "🔲", "name": "FPGA Xilinx XDMA", "addr": "PCI 10EE:7022",
+                        "detail": "DMA акселератор", "online": "FPGA=OK" in txt})
+            out.append({"icon": "🔌", "name": "XGecu T48", "addr": "USB A466:0A53",
+                        "detail": "программатор", "online": "XGECU=OK" in txt})
+        except Exception:
+            pass
+    _hw_cache = {"list": out}
+    _hw_ts = time.time()
+    return out
+
+
+@app.route("/api/devices")
+def devices():
+    devs: list = []
+    net = [
+        ("🎙️", "ESP32 Xiaozhi",     "localhost", 8006,  "голосовая плата"),
+        ("🧠", "ARGOS Brain / MCP",  "localhost", 8000,  "мозг :8000"),
+        ("🔥", "GPU V100 Tesla",     "localhost", 8085,  "llama-server"),
+        ("🎮", "GPU RX580",          "localhost", 8082,  "llama-server"),
+        ("🦙", "Ollama",             "localhost", 11434, "LLM runtime"),
+    ]
+    for icon, name, host, port, detail in net:
+        devs.append({"icon": icon, "name": name, "addr": f"{host}:{port}",
+                     "detail": detail, "online": _check_port(host, port)})
+    devs += _hw_devices()
+    # ZTE F460 — прошивка считана программатором (исторически, устройство оффлайн)
+    devs.append({"icon": "📡", "name": "ZTE F460 GPON ONT", "addr": "RTL8676/Lexra",
+                 "detail": "прошивка считана 16MB", "online": False})
+    # ФИКС: HA живёт по HA_URL (напр. ноутбук 192.168.1.53:8123), НЕ на localhost.
+    _ha_host, _ha_port = _ha_host_port()
+    ha_online = _check_port(_ha_host, _ha_port)
+    return jsonify({"devices": devs,
+                    "home_assistant": {"online": ha_online,
+                                       "addr": f"{_ha_host}:{_ha_port}",
+                                       "version": f"{_ha_host}:{_ha_port}" if ha_online else None}})
+
+
+@app.route("/api/action/start-ha", methods=["POST"])
+def start_ha():
+    """Запустить Home Assistant контейнер (Docker)."""
+    try:
+        chk = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=homeassistant", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10)
+        if "homeassistant" in (chk.stdout or ""):
+            subprocess.run(["docker", "start", "homeassistant"],
+                           capture_output=True, text=True, timeout=40)
+            return jsonify({"ok": True, "action": "started existing container"})
+        r = subprocess.run(
+            ["docker", "run", "-d", "--name", "homeassistant", "--restart=unless-stopped",
+             "-p", "8123:8123", "-v", "argos_ha_config:/config",
+             "ghcr.io/home-assistant/home-assistant:stable"],
+            capture_output=True, text=True, timeout=90)
+        if r.returncode == 0:
+            return jsonify({"ok": True, "action": "created", "id": (r.stdout or "").strip()[:12]})
+        return jsonify({"ok": False, "error": (r.stderr or "").strip()[:200]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+# ── Home Assistant Proxy ───────────────────────────────────────────────────
+
+HA_URL   = os.getenv("HA_URL", "http://localhost:8123").rstrip("/")
+HA_TOKEN = os.getenv("HA_TOKEN", "").strip()
+ARGOS_HA_REST_URL = os.getenv("ARGOS_HA_REST_URL", "http://127.0.0.1:8002").rstrip("/")
+
+
+def _ha_headers() -> dict:
+    return {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"} if HA_TOKEN else {}
+
+
+def _ha_host_port() -> tuple[str, int]:
+    parsed = urllib.parse.urlparse(HA_URL)
+    host = parsed.hostname or "localhost"
+    if parsed.port:
+        return host, parsed.port
+    return host, 443 if parsed.scheme == "https" else 80
+
+
+def _ha_error(message: str, **extra):
+    payload = {"online": False, "configured": bool(HA_TOKEN), "url": HA_URL, "error": message}
+    payload.update(extra)
+    return jsonify(payload)
+
+
+@app.route("/api/ha/info")
+def ha_info():
+    """GET — базовая проверка Home Assistant без тяжёлого списка сущностей."""
+    host, port = _ha_host_port()
+    port_open = _check_port(host, port)
+    data = {
+        "online": port_open,
+        "configured": bool(HA_TOKEN),
+        "url": HA_URL,
+        "host": host,
+        "port": port,
+    }
+    if not HA_TOKEN:
+        data["error"] = "HA_TOKEN не задан"
+        return jsonify(data)
+    if not _REQUESTS:
+        data["error"] = "requests не установлен"
+        return jsonify(data)
+    try:
+        r = requests.get(f"{HA_URL}/api/config", headers=_ha_headers(), timeout=8)
+        data["online"] = r.ok
+        data["status"] = r.status_code
+        if r.ok:
+            cfg = r.json()
+            data.update({
+                "version": cfg.get("version"),
+                "location_name": cfg.get("location_name"),
+                "time_zone": cfg.get("time_zone"),
+                "unit_system": cfg.get("unit_system"),
+            })
+        else:
+            data["error"] = f"HTTP {r.status_code}"
+        return jsonify(data)
+    except Exception as e:
+        data["online"] = False
+        data["error"] = str(e)
+        return jsonify(data)
+
+
+@app.route("/api/ha/states")
+def ha_states():
+    """GET — все сущности Home Assistant."""
+    if not HA_TOKEN:
+        return jsonify({"online": False, "error": "HA_TOKEN не задан", "states": []})
+    if not _REQUESTS:
+        return jsonify({"online": False, "error": "requests не установлен", "states": []})
+    try:
+        r = requests.get(f"{HA_URL}/api/states", headers=_ha_headers(), timeout=8)
+        if r.ok:
+            states = r.json()
+            return jsonify({"online": True, "states": states if isinstance(states, list) else []})
+        return jsonify({"online": False, "error": f"HTTP {r.status_code}", "states": []})
+    except Exception as e:
+        return jsonify({"online": False, "error": str(e), "states": []})
+
+
+@app.route("/api/ha/summary")
+def ha_summary():
+    """GET — компактная статистика по доменам HA для панели."""
+    if not HA_TOKEN:
+        return jsonify({"online": False, "configured": False, "error": "HA_TOKEN не задан"})
+    if not _REQUESTS:
+        return jsonify({"online": False, "configured": True, "error": "requests не установлен"})
+    try:
+        r = requests.get(f"{HA_URL}/api/states", headers=_ha_headers(), timeout=8)
+        if not r.ok:
+            return jsonify({"online": False, "configured": True, "error": f"HTTP {r.status_code}"})
+        states = r.json()
+        if not isinstance(states, list):
+            states = []
+        domains = Counter(str(s.get("entity_id", "other")).split(".", 1)[0] for s in states)
+        unavailable = sum(1 for s in states if s.get("state") in ("unavailable", "unknown"))
+        active = sum(1 for s in states if s.get("state") not in ("unavailable", "unknown", "off"))
+        return jsonify({
+            "online": True,
+            "configured": True,
+            "url": HA_URL,
+            "total": len(states),
+            "active": active,
+            "unavailable": unavailable,
+            "domains": dict(domains),
+        })
+    except Exception as e:
+        return jsonify({"online": False, "configured": True, "error": str(e)})
+
+
+@app.route("/api/ha/service", methods=["POST"])
+def ha_service():
+    """POST — вызвать сервис Home Assistant: {domain, service, entity_id?, data?}."""
+    if not HA_TOKEN:
+        return jsonify({"ok": False, "error": "HA_TOKEN не задан"})
+    if not _REQUESTS:
+        return jsonify({"ok": False, "error": "requests не установлен"})
+    data = request.get_json(silent=True) or {}
+    domain = data.get("domain", "")
+    service = data.get("service", "")
+    entity_id = data.get("entity_id", "")
+    if not domain or not service:
+        return jsonify({"ok": False, "error": "domain and service required"}), 400
+    payload = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if entity_id:
+        payload["entity_id"] = entity_id
+    try:
+        r = requests.post(
+            f"{HA_URL}/api/services/{domain}/{service}",
+            headers=_ha_headers(),
+            json=payload,
+            timeout=8,
+        )
+        return jsonify({"ok": r.ok, "status": r.status_code, "text": r.text[:500]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+# ── ARGOS HA REST API proxy (:8002) ─────────────────────────────────────────
+
+@app.route("/api/argos-ha/<path:path>", methods=["GET", "POST", "OPTIONS"])
+def argos_ha_rest_proxy(path: str):
+    """Proxy local ARGOS HA REST endpoints for the dashboard browser."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    if not _REQUESTS:
+        return jsonify({"ok": False, "error": "requests не установлен"}), 500
+    url = f"{ARGOS_HA_REST_URL}/{path.lstrip('/')}"
+    try:
+        if request.method == "GET":
+            r = requests.get(url, params=request.args, timeout=12)
+        else:
+            r = requests.post(url, json=request.get_json(silent=True), timeout=35)
+        return Response(
+            r.content,
+            status=r.status_code,
+            content_type=r.headers.get("Content-Type", "application/json"),
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "online": False, "url": url, "error": str(exc)}), 503
 
 
 # ── Content Fetcher ───────────────────────────────────────────────────────────

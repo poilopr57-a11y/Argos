@@ -18,6 +18,8 @@ usb_access_point.py — USB-гаджет + WiFi точка доступа + ве
 
 from __future__ import annotations
 
+SKILL_DESCRIPTION = "USB-гаджет + WiFi AP + веб-морда ARGOS"
+
 import os
 import subprocess
 import threading
@@ -310,6 +312,12 @@ rsn_pairwise=CCMP
 
         lines.append(f"\nКоманды: 'запусти точку доступа' | 'стоп точки доступа' | 'веб морда'")
         return "\n".join(lines)
+
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        result = handle(t or "статус", self.core)
+        return result if result is not None else self.status()
 
 
 def _minimal_ui() -> str:

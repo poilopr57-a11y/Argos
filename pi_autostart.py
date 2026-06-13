@@ -1,150 +1,103 @@
 #!/usr/bin/env python3
 """
-pi_autostart.py — Автозапуск Pi Coding Agent при старте ARGOS
+pi_autostart.py — Статус и тест Pi Coding Agent
+
+Pi — это CLI-агент (как Claude Code), НЕ сервер.
+Не требует запуска "в фоне" — вызывается по запросу через pi_bridge.
 
 Использование:
-  python pi_autostart.py              # запуск в фоне
-  python pi_autostart.py --foreground # видимый режим
+  python pi_autostart.py              # проверка установки
   python pi_autostart.py --status     # статус Pi
+  python pi_autostart.py --test       # тестовый запрос
 """
 
 import os
 import sys
-import time
+import shutil
 import subprocess
-import requests
-import threading
+import time
 from pathlib import Path
 
-# Конфигурация
 ARGOS_DIR = Path(__file__).parent.resolve()
-PI_BASE_URL = os.getenv("PI_BASE_URL", "http://localhost:18765")
-PI_CMD = os.getenv("PI_CMD", "pi")
-HEALTH_CHECK_INTERVAL = 30  # секунд
-SESSIONS_DIR = ARGOS_DIR / ".pi" / "sessions"
+PI_CMD    = os.getenv("PI_CMD", "pi")
+KIMI_KEY  = os.getenv("KIMI_API_KEY", "")
 
 
 def log(msg):
-    """Логирование с меткой времени."""
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[Pi-AutoStart {ts}] {msg}")
+    ts = time.strftime("%H:%M:%S")
+    print(f"[Pi {ts}] {msg}")
 
 
-def find_pi_path():
-    """Найти путь к Pi."""
-    import shutil
-    # Сначала в PATH
-    if shutil.which("pi"):
-        return "pi"
-    # Windows npm путь
+def find_pi() -> str:
+    """Найти путь к Pi CLI."""
+    if shutil.which(PI_CMD):
+        return PI_CMD
     win_path = r"C:\Users\AvA\AppData\Roaming\npm\pi.cmd"
     if os.path.exists(win_path):
         return win_path
-    return "pi"  # fallback
+    return PI_CMD
 
 
-def is_pi_running():
-    """Проверить, запущен ли Pi."""
+def get_version(pi_path: str) -> str:
     try:
-        r = requests.get(f"{PI_BASE_URL}/health", timeout=3)
-        return r.ok
-    except:
-        return False
-
-
-def save_session_memory(pid, started_at):
-    """Сохранить информацию о сессии Pi."""
-    mem_path = ARGOS_DIR / "AGENTS.md"
-    session_info = f"""
-## Pi Session — {time.strftime("%Y-%m-%d %H:%M:%S")}
-- PID: {pid}
-- Started: {started_at}
-- CWD: {ARGOS_DIR}
-- URL: {PI_BASE_URL}
-"""
-    try:
-        with open(mem_path, "a", encoding="utf-8") as f:
-            f.write(session_info)
-        log(f"Память сохранена: {mem_path}")
+        r = subprocess.run([pi_path, "--version"], capture_output=True, text=True,
+                           shell=pi_path.endswith(".cmd"), timeout=8)
+        return (r.stdout.strip() or r.stderr.strip() or "unknown").splitlines()[0]
     except Exception as e:
-        log(f"Ошибка сохранения памяти: {e}")
+        return f"error: {e}"
 
 
-def start_pi_background():
-    """Запустить Pi в фоновом режиме."""
-    pi_path = find_pi_path()
-    log(f"Запуск Pi: {pi_path}")
-    
+def run_task(task: str, pi_path: str, timeout: int = 120) -> str:
+    """Выполнить задачу через Pi (non-interactive)."""
+    cmd = [pi_path, "--print", "--no-session"]
+    if KIMI_KEY:
+        cmd += ["--provider", "kimi", "--api-key", KIMI_KEY]
+    cmd.append(task)
     try:
-        proc = subprocess.Popen(
-            [pi_path, "server"],
-            cwd=str(ARGOS_DIR),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={**os.environ, "PI_CWD": str(ARGOS_DIR)},
+        r = subprocess.run(
+            " ".join(f'"{a}"' if " " in a else a for a in cmd),
+            shell=True, capture_output=True, text=True,
+            timeout=timeout, cwd=str(ARGOS_DIR)
         )
-        started = time.strftime("%Y-%m-%d %H:%M:%S")
-        log(f"Pi запущен (PID {proc.pid}) в {started}")
-        
-        # Сохраняем память
-        save_session_memory(proc.pid, started)
-        
-        # Ждём запуска
-        for i in range(10):
-            time.sleep(2)
-            if is_pi_running():
-                log(f"Pi готов к работе: {PI_BASE_URL}")
-                return True
-            log(f"Ожидание запуска Pi... ({i+1}/10)")
-        
-        log("Pi не ответил за 20 секунд")
-        return False
-        
+        return (r.stdout or r.stderr or "[пустой ответ]").strip()
+    except subprocess.TimeoutExpired:
+        return f"[Pi] Timeout {timeout}s"
     except Exception as e:
-        log(f"Ошибка запуска Pi: {e}")
-        return False
+        return f"[Pi] Error: {e}"
 
 
-def watchdog_loop():
-    """Следить за Pi и перезапускать при падении."""
-    log("Watchdog запущен")
-    while True:
-        time.sleep(HEALTH_CHECK_INTERVAL)
-        if not is_pi_running():
-            log("Pi не отвечает — перезапуск...")
-            start_pi_background()
+def status():
+    pi_path = find_pi()
+    ver = get_version(pi_path)
+    provider = "kimi (KIMI_API_KEY)" if KIMI_KEY else "default"
+    print(f"Pi CLI: {'✅ ' + ver if 'error' not in ver else '❌ ' + ver}")
+    print(f"Path:   {pi_path}")
+    print(f"Provider: {provider}")
+    print(f"CWD:    {ARGOS_DIR}")
+    print()
+    print("Pi — CLI-агент. Запуск: pi_bridge.execute('задача') из ARGOS.")
+    print("Нет постоянного сервера — вызывается по требованию.")
+
+
+def test():
+    pi_path = find_pi()
+    ver = get_version(pi_path)
+    if "error" in ver.lower():
+        print(f"❌ Pi не найден: {ver}")
+        return
+
+    print(f"✅ Pi {ver} найден. Выполняю тестовый запрос...")
+    result = run_task("Напиши однострочный Python-принт 'ARGOS Pi OK'", pi_path, timeout=60)
+    print(f"Ответ Pi:\n{result[:500]}")
 
 
 def main():
-    if "--status" in sys.argv:
-        if is_pi_running():
-            print(f"✅ Pi работает: {PI_BASE_URL}")
-        else:
-            print(f"❌ Pi не запущен")
-        return
-    
-    if "--foreground" in sys.argv:
-        # Запуск в видимом режиме
-        pi_path = find_pi_path()
-        subprocess.run([pi_path, "server"], cwd=str(ARGOS_DIR))
+    if "--test" in sys.argv:
+        test()
+    elif "--status" in sys.argv or not sys.argv[1:]:
+        status()
     else:
-        # Фоновый режим
-        if is_pi_running():
-            log("Pi уже запущен")
-        else:
-            start_pi_background()
-        
-        # Запускаем watchdog
-        watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True, name="PiWatchdog")
-        watchdog_thread.start()
-        
-        log("Pi AutoStart работает в фоне. Нажми Ctrl+C для остановки.")
-        try:
-            while True:
-                time.sleep(10)
-        except KeyboardInterrupt:
-            log("Остановка...")
-            sys.exit(0)
+        print("Использование: python pi_autostart.py [--status|--test]")
 
 
 if __name__ == "__main__":

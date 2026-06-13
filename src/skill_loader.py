@@ -5,7 +5,7 @@ skill_loader.py — Plugin-система навыков Аргоса
   Поддерживает версионирование и P2P-синхронизацию.
 """
 
-import importlib, importlib.util, json, os, sys, traceback
+import importlib, importlib.util, inspect, json, os, sys, traceback
 from packaging.version import Version as V
 from src.argos_logger import get_logger
 from src.event_bus import get_bus, Events
@@ -90,34 +90,84 @@ class SkillManifest:
 
 
 class SkillInstance:
-    def __init__(self, manifest: SkillManifest, module):
+    def __init__(self, manifest: SkillManifest, module, runtime=None):
         self.manifest = manifest
         self.module = module
+        self.runtime = runtime if runtime is not None else module
         self.loaded_at = __import__("time").time()
         self._started = False
 
+    @staticmethod
+    def _call_maybe_with_core(fn, core=None):
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return fn()
+
+        required = [
+            p for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            and p.default is inspect._empty
+        ]
+        if not required:
+            return fn()
+        return fn(core)
+
     def start(self, core=None):
-        log.info("SkillInstance.start: module=%s, core=%s", getattr(self.module, '__name__', '?'), type(core).__name__ if core else None)
-        if hasattr(self.module, "setup"):
-            try:
-                self.module.setup(core)
-            except TypeError:
-                # Совместимость: часть legacy-скиллов ожидает setup() без аргументов.
-                self.module.setup()
+        target = self.runtime
+        log.info(
+            "SkillInstance.start: module=%s runtime=%s core=%s",
+            getattr(self.module, "__name__", "?"),
+            type(target).__name__,
+            type(core).__name__ if core else None,
+        )
+        if hasattr(target, "setup"):
+            self._call_maybe_with_core(target.setup, core)
+        elif hasattr(target, "start"):
+            self._call_maybe_with_core(target.start, core)
         self._started = True
 
     def stop(self):
-        if hasattr(self.module, "teardown"):
-            self.module.teardown()
+        target = self.runtime
+        if hasattr(target, "teardown"):
+            target.teardown()
+        elif hasattr(target, "stop"):
+            target.stop()
         self._started = False
 
     def handle(self, text: str, core=None):
-        if hasattr(self.module, "handle"):
+        target = self.runtime
+        if hasattr(target, "handle"):
             try:
-                return self.module.handle(text, core)
+                return target.handle(text, core)
             except TypeError:
                 # Совместимость: часть legacy-скиллов ожидает handle(text).
-                return self.module.handle(text)
+                return target.handle(text)
+        # Fallback: если runtime — экземпляр класса без handle(),
+        # пробуем module-level handle() (паттерн: класс + модульный handle с проверкой триггеров)
+        if self.module is not None and target is not self.module:
+            module_handle = getattr(self.module, "handle", None)
+            if callable(module_handle):
+                try:
+                    result = module_handle(text, core)
+                except TypeError:
+                    try:
+                        result = module_handle(text)
+                    except Exception:
+                        result = None
+                except Exception:
+                    result = None
+                if result is not None:
+                    return result
+        skill_name = (self.manifest.name or "").strip().lower()
+        normalized_text = (text or "").strip().lower()
+        if skill_name and skill_name in normalized_text:
+            if hasattr(target, "execute"):
+                return self._call_maybe_with_core(target.execute, core)
+            if hasattr(target, "status"):
+                return self._call_maybe_with_core(target.status, core)
+            if hasattr(target, "report"):
+                return self._call_maybe_with_core(target.report, core)
         return None
 
     @property
@@ -174,6 +224,52 @@ class SkillLoader:
                 log.error("Manifest load %s: %s", path, e)
         return None
 
+    def _resolve_runtime(self, module, manifest: SkillManifest, core=None):
+        register_fn = getattr(module, "register", None)
+        if callable(register_fn):
+            try:
+                runtime = register_fn(core)
+            except TypeError:
+                runtime = register_fn()
+            if runtime is not None:
+                return runtime
+
+        entry_class = ""
+        if isinstance(getattr(manifest, "_raw", None), dict):
+            entry_class = str(manifest._raw.get("entry_class", "")).strip()
+        if entry_class and hasattr(module, entry_class):
+            cls = getattr(module, entry_class)
+            if inspect.isclass(cls):
+                try:
+                    return cls(core)
+                except TypeError:
+                    return cls()
+
+        lifecycle_candidates = []
+        public_candidates = []
+        for _, cls in inspect.getmembers(module, inspect.isclass):
+            if cls.__module__ != getattr(module, "__name__", ""):
+                continue
+            if cls.__name__.startswith("_"):
+                continue
+            public_candidates.append(cls)
+            if any(hasattr(cls, attr) for attr in ("handle", "start", "execute", "status", "report")):
+                lifecycle_candidates.append(cls)
+
+        selected = None
+        if len(lifecycle_candidates) == 1:
+            selected = lifecycle_candidates[0]
+        elif len(public_candidates) == 1:
+            selected = public_candidates[0]
+
+        if selected is not None:
+            try:
+                return selected(core)
+            except TypeError:
+                return selected()
+
+        return module
+
     def load(self, skill_name: str, core=None) -> str:
         skill_dir = os.path.join(SKILLS_ROOT, skill_name)
         if not os.path.isdir(skill_dir):
@@ -202,8 +298,8 @@ class SkillLoader:
             spec = importlib.util.spec_from_file_location(f"argos_skill_{skill_name}", entry_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-
-            inst = SkillInstance(manifest, module)
+            runtime = self._resolve_runtime(module, manifest, core)
+            inst = SkillInstance(manifest, module, runtime=runtime)
             inst.start(core)
             self._skills[skill_name] = inst
             bus.emit(
@@ -231,7 +327,8 @@ class SkillLoader:
                 },
                 os.path.join(SKILLS_ROOT, skill_name),
             )
-            inst = SkillInstance(manifest, mod)
+            runtime = self._resolve_runtime(mod, manifest, core)
+            inst = SkillInstance(manifest, mod, runtime=runtime)
             inst.start(core)  # Call setup() with core
             self._skills[skill_name] = inst
             return f"✅ Навык '{skill_name}' загружен (legacy mode)."
@@ -328,16 +425,21 @@ class SkillLoader:
 
             try:
                 mod = importlib.import_module(f"src.skills.{skill_name}")
+                # Читаем описание/версию из атрибутов модуля если есть
+                _desc    = getattr(mod, "SKILL_DESCRIPTION", "") or getattr(mod, "__description__", "")
+                _version = getattr(mod, "SKILL_VERSION",     "") or getattr(mod, "__version__", "0.1.0")
                 manifest = SkillManifest(
                     {
-                        "name": skill_name,
-                        "version": "0.1.0",
-                        "entry": filename,
-                        "author": "legacy",
+                        "name":        getattr(mod, "SKILL_NAME", skill_name),
+                        "version":     _version,
+                        "entry":       filename,
+                        "author":      getattr(mod, "SKILL_AUTHOR", "legacy"),
+                        "description": _desc,
                     },
                     os.path.join(SKILLS_ROOT, skill_name),
                 )
-                inst = SkillInstance(manifest, mod)
+                runtime = self._resolve_runtime(mod, manifest, core)
+                inst = SkillInstance(manifest, mod, runtime=runtime)
                 inst.start(core)
                 self._skills[skill_name] = inst
                 self._import_pass += 1

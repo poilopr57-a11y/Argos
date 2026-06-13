@@ -993,6 +993,8 @@ class ArgosCore:
             return "yandexgpt"
         if value in {"ollama", "local", "o"}:
             return "ollama"
+        if value in {"pi", "p", "pi-coding", "coding-agent"}:
+            return "pi"
         if value in {"groq", "gr"}:
             return "groq"
         if value in {"deepseek", "ds"}:
@@ -1014,6 +1016,7 @@ class ArgosCore:
             "groq":      "Groq",
             "deepseek":  "DeepSeek",
             "openai":    "OpenAI",
+            "pi":        "Pi Coding Agent",
         }
         return labels.get(self.ai_mode, "Auto")
 
@@ -1051,6 +1054,12 @@ class ArgosCore:
         else:
             log.info("YandexGPT недоступен — нет IAM/FOLDER")
 
+        # Pi Coding Agent
+        if self._has_pi_config():
+            log.info("Pi Coding Agent: ✅ обнаружен")
+        else:
+            log.info("Pi Coding Agent недоступен — не установлен")
+
     def _gemini_rate_limit_text(self) -> str:
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
 
@@ -1079,6 +1088,92 @@ class ArgosCore:
         iam = _read_secret_env("YANDEX_IAM_TOKEN")
         folder = _read_secret_env("YANDEX_FOLDER_ID")
         return bool(iam and folder)
+
+    # ═══════════════════════════════════════════════════════
+    # Pi Coding Agent Integration
+    # ═══════════════════════════════════════════════════════
+    def _has_pi_config(self) -> bool:
+        """Проверяет наличие Pi в системе."""
+        import shutil
+        return bool(shutil.which("pi") or os.path.exists(r"C:\Users\AvA\AppData\Roaming\npm\pi.cmd"))
+
+    def _ensure_pi_ready(self) -> bool:
+        """Проверяет готовность Pi."""
+        try:
+            result = subprocess.run(
+                ["pi", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _ask_pi(self, context: str, user_text: str) -> str | None:
+        """Запрос к Pi Coding Agent через --print --mode json."""
+        if not self._has_pi_config():
+            log.debug("[Pi] Pi не найден в системе")
+            return None
+        if self._is_provider_temporarily_disabled("Pi"):
+            return None
+        
+        try:
+            # Формируем промпт для Pi
+            full_prompt = f"""Ты — Argos. Контекст системы:
+{context}
+
+История диалога:
+{self.context.get_prompt_context()}
+
+Вопрос пользователя: {user_text}
+
+Отвечай кратко и по делу на русском языке. Выполняй задачи, а не описывай их."""
+
+            # Вызываем Pi в JSON режиме
+            result = subprocess.run(
+                ["pi", "--print", "--mode", "json", "--no-session", full_prompt],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if result.returncode != 0:
+                log.error("[Pi] Ошибка выполнения: %s", result.stderr[:500])
+                return None
+            
+            # Pi возвращает JSON с полем "content"
+            import json as _json
+            try:
+                response_data = _json.loads(result.stdout)
+                text = response_data.get("content", "")
+                if text:
+                    log.info("[Pi] ✅ Ответ получен (%d симв.)", len(text))
+                    return text.strip()
+            except _json.JSONDecodeError:
+                # Если не JSON — возвращаем как есть
+                text = result.stdout.strip()
+                if text:
+                    return text
+            
+            return None
+            
+        except subprocess.TimeoutExpired:
+            log.error("[Pi] Таймаут выполнения (120 сек)")
+            self._disable_provider_temporarily("Pi", "таймаут выполнения")
+            return None
+        except Exception as e:
+            log.error("[Pi] Ошибка: %s", e)
+            return None
+
+    def _get_pi_capabilities(self) -> dict:
+        """Возвращает возможности Pi для контекста."""
+        return {
+            "name": "Pi Coding Agent",
+            "tools": ["read", "write", "edit", "bash", "web_search", "web_fetch"],
+            "languages": ["Python", "JavaScript", "TypeScript", "C", "C++", "Java", "Rust", "Go", "и другие"],
+            "features": ["автоисследование (autoresearch)", "оптимизация кода", "исправление багов", "рефакторинг"]
+        }
 
     def _is_provider_temporarily_disabled(self, provider_name: str) -> bool:
         if provider_name in self._provider_disabled_permanent:
@@ -1591,13 +1686,50 @@ class ArgosCore:
             log.error("[Ollama] Ошибка при скачивании модели '%s': %s", model, exc)
         return False
 
+    def _ask_ollama_cloud(self, context: str, user_text: str, model_override: str | None = None) -> str | None:
+        """Fallback: Ollama Cloud API (ollama.com) через OLLAMA_API_KEY,
+        используется когда локальный Ollama (localhost:11434) недоступен.
+        Модель берётся из OLLAMA_CLOUD_MODEL (по умолчанию gpt-oss:120b-cloud).
+        """
+        api_key = os.getenv("OLLAMA_API_KEY")
+        if not api_key:
+            return None
+        cloud_model = model_override or os.getenv("OLLAMA_CLOUD_MODEL", "gpt-oss:120b-cloud")
+        try:
+            from ollama import Client as _OllamaCloudClient
+
+            client = _OllamaCloudClient(
+                host="https://ollama.com",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            response = client.chat(
+                model=cloud_model,
+                messages=[
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": user_text},
+                ],
+            )
+            msg = response.get("message") if isinstance(response, dict) else getattr(response, "message", None)
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+            if content:
+                log.info("[Ollama] Cloud fallback OK (модель=%s)", cloud_model)
+                return content
+        except Exception as _e:
+            log.error("[Ollama] Cloud fallback failed: %s", _e)
+        return None
+
     def _ask_ollama(self, context: str, user_text: str, model_override: str | None = None) -> str | None:
         """Запрос к Ollama через официальный Python SDK (ollama.chat).
 
         Основная модель берётся из OLLAMA_MODEL в .env (по умолчанию llama3.1).
         Fallback: OLLAMA_MODEL из .env → argos-core.
+        Если локальный сервис недоступен — пробуем Ollama Cloud (OLLAMA_API_KEY).
         """
         if not self._ensure_ollama_running():
+            log.warning("[Ollama] Локальный сервис недоступен — пробую Ollama Cloud")
+            cloud_result = self._ask_ollama_cloud(context, user_text, model_override)
+            if cloud_result is not None:
+                return cloud_result
             log.error("[Ollama] _ask_ollama: сервис недоступен, запрос отменён")
             return None
         try:
@@ -1727,6 +1859,9 @@ class ArgosCore:
                                 ("OpenAI", "OPENAI_API_KEY")]:
             if _read_secret_env(env_key) and not self._is_provider_temporarily_disabled(pname):
                 providers.append((pname, functools.partial(self._ask_openai_compat, provider_name=pname)))
+        # Pi Coding Agent — мощный агент для программирования
+        if self._has_pi_config() and not self._is_provider_temporarily_disabled("Pi"):
+            providers.append(("Pi", self._ask_pi))
         # Ollama — всегда последний fallback
         providers.append(("Ollama", self._ask_ollama))
         return providers[:self.auto_collab_max_models]
@@ -2009,6 +2144,9 @@ class ArgosCore:
                     pname = "DeepSeek"
                 answer = self._ask_openai_compat(context, user_text, provider_name=pname)
                 engine = f"{q_data['name']} ({pname})"
+            elif self.ai_mode == "pi":
+                answer = self._ask_pi(context, user_text)
+                engine = f"{q_data['name']} (Pi Coding Agent)"
             else:
                 answer, auto_engine = self._ask_auto_consensus(context, user_text)
                 if auto_engine:
@@ -2026,6 +2164,8 @@ class ArgosCore:
                     answer = "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
                 elif self.ai_mode == "ollama":
                     answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
+                elif self.ai_mode == "pi":
+                    answer = "Pi Coding Agent недоступен. Проверьте установку или переключите режим ИИ."
                 else:
                     answer = self._offline_answer(user_text)
                 engine = "Offline"
@@ -3904,6 +4044,8 @@ class ArgosCore:
             return self.set_ai_mode("yandexgpt")
         if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
             return self.set_ai_mode("ollama")
+        if any(k in t for k in ["режим ии pi", "модель pi", "ai mode pi", "режим пи"]):
+            return self.set_ai_mode("pi")
         if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):
             return f"🤖 Текущий режим ИИ: {self.ai_mode_label()}"
         if any(k in t for k in ["включи wake word", "wake word вкл"]):

@@ -6,6 +6,8 @@ hardware_intel.py — ARGOS Skill: Hardware Diagnostics
 
 from __future__ import annotations
 
+SKILL_DESCRIPTION = "Диагностика железа: CPU/RAM/GPU/USB/BT/NFC"
+
 import os
 import platform
 

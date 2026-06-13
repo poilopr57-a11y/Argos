@@ -9,13 +9,23 @@ import hashlib
 import time
 import logging
 import os
+import threading
 from typing import Optional
 
-try:
-    from sentence_transformers import SentenceTransformer
-    HAS_EMBEDDINGS = True
-except ImportError:
-    HAS_EMBEDDINGS = False
+# SentenceTransformer: грузим ТОЛЬКО если явно включён флаг ARGOS_SEMANTIC_CACHE=1
+# По умолчанию выключен — загрузка 80MB модели вешает CPU на 2 мин при старте
+_SEMANTIC_CACHE_ENABLED = os.getenv("ARGOS_SEMANTIC_CACHE", "0").strip() in ("1", "true", "on", "yes")
+
+HAS_EMBEDDINGS = False
+SentenceTransformer = None  # placeholder
+
+if _SEMANTIC_CACHE_ENABLED:
+    try:
+        from sentence_transformers import SentenceTransformer as _ST
+        SentenceTransformer = _ST
+        HAS_EMBEDDINGS = True
+    except ImportError:
+        pass
 
 log = logging.getLogger("argos.api_cost")
 
@@ -39,7 +49,9 @@ TIER_HEAVY = "heavy"    # Claude 3.5 Sonnet, GPT-4 Turbo
 class SemanticCache:
     """Кэш семантических запросов с embeddings."""
     
-    def __init__(self, db_path: str = "data/semantic_cache.db", threshold: float = 0.92):
+    def __init__(self, db_path: str = "data/semantic_cache.db", threshold: float = 0.985):
+        # 0.985 — строгий порог: только почти идентичные по смыслу запросы.
+        # Низкий порог (0.92) давал "одинаковые ответы на разные команды".
         self.threshold = threshold
         self._embedder = None
         self._cache: dict[str, tuple[str, float]] = {}  # hash -> (response, timestamp)
@@ -47,13 +59,24 @@ class SemanticCache:
         self._db_path = db_path
         self._load_cache()
         
-        if HAS_EMBEDDINGS:
-            try:
-                model_name = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-                self._embedder = SentenceTransformer(model_name)
-                log.info("[SemanticCache] Embeddings ready: %s", model_name)
-            except Exception as e:
-                log.warning("[SemanticCache] Embeddings failed: %s", e)
+        if HAS_EMBEDDINGS and SentenceTransformer is not None:
+            # Грузим модель в daemon-потоке с таймаутом 30с — не блокируем запуск
+            model_name = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+            done_event = threading.Event()
+
+            def _load_embedder():
+                try:
+                    self._embedder = SentenceTransformer(model_name)
+                    log.info("[SemanticCache] Embeddings ready: %s", model_name)
+                except Exception as exc:
+                    log.warning("[SemanticCache] Embeddings failed: %s", exc)
+                finally:
+                    done_event.set()
+
+            t = threading.Thread(target=_load_embedder, daemon=True, name="semcache-init")
+            t.start()
+            if not done_event.wait(timeout=30):
+                log.warning("[SemanticCache] Embeddings timeout 30s — работаем без векторов")
     
     def _load_cache(self):
         import json
@@ -84,7 +107,12 @@ class SemanticCache:
         for q_cache in self._cache:
             if q_lower == q_cache:
                 return self._cache[q_cache][0]
-        
+
+        # Короткие запросы (команды, "кто ты", "статус") НЕ матчим семантически —
+        # у них эмбеддинги похожи и дают ложные hit'ы (одинаковые ответы на разные команды).
+        if len(q_lower.strip()) < 25:
+            return None
+
         if self._embedder and self._vectors:
             try:
                 emb = self._embedder.encode(query)
@@ -131,9 +159,9 @@ class ModelTierRouter:
     def __init__(self):
         self._cache = SemanticCache()
         self._tier_map = {
-            TIER_FAST: ["gpt-4o-mini", "gemini-1.5-flash", "llama3.1:8b"],
-            TIER_MEDIUM: ["gpt-4o", "gemini-1.5-pro", "claude-3-haiku"],
-            TIER_HEAVY: ["gpt-4-turbo", "claude-3.5-sonnet", "gemini-2.0"],
+            TIER_FAST: ["gpt-4o-mini", "gemini-2.5-flash", "llama3.1:8b"],
+            TIER_MEDIUM: ["gpt-4o", "gemini-2.5-flash-lite", "claude-3-haiku"],
+            TIER_HEAVY: ["gpt-4-turbo", "claude-3.5-sonnet", "gemini-2.5-flash"],
         }
     
     def estimate_tier(self, query: str) -> str:

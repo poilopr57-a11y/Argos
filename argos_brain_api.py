@@ -114,6 +114,64 @@ def _argos_v1_exists() -> bool:
         return False
 
 
+def _get_system_metrics() -> dict:
+    """Собирает метрики железа ПК: CPU temp, RAM %, GPU VRAM."""
+    metrics = {"cpu_temp": None, "ram_used": None, "gpu_vram": None}
+    # CPU temp
+    try:
+        temps = []
+        for zone in range(0, 20):
+            path = f"/sys/class/thermal/thermal_zone{zone}/temp"
+            if not _os.path.exists(path):
+                continue
+            with open(path) as f:
+                val = int(f.read().strip())
+            if val > 0:
+                temps.append(val / 1000.0)
+        if temps:
+            metrics["cpu_temp"] = round(max(temps), 1)
+    except Exception:
+        pass
+    # RAM %
+    try:
+        meminfo: dict[str, int] = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    meminfo[k.strip()] = int(v.split()[0])
+        total = meminfo.get("MemTotal", 1)
+        avail = meminfo.get("MemAvailable", 0)
+        metrics["ram_used"] = round((1 - avail / total) * 100, 1)
+    except Exception:
+        pass
+    # GPU VRAM (AMD ROCm)
+    try:
+        result = subprocess.run(
+            ["rocm-smi", "--showmeminfo", "vram", "--csv"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().splitlines()[1:]:
+            parts = line.split(",")
+            if len(parts) >= 2:
+                vram_mb = parts[1].strip().replace(" MiB", "").replace(" MB", "")
+                metrics["gpu_vram"] = int(vram_mb)
+                break
+    except Exception:
+        pass
+    # GPU VRAM fallback (nvidia-smi)
+    if metrics["gpu_vram"] is None:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            metrics["gpu_vram"] = int(result.stdout.strip().splitlines()[0])
+        except Exception:
+            pass
+    return metrics
+
+
 def _mark_stale_nodes() -> None:
     """Помечает узлы без heartbeat > NODE_TIMEOUT_SECONDS как offline."""
     now = datetime.now()
@@ -613,6 +671,19 @@ def system_status():
         "skills_count":    skills_count,
         "brain_ready":     brain is not None,
         "timestamp":       datetime.now().isoformat(),
+    }), 200
+
+
+@app.route('/system', methods=['GET'])
+def system_metrics():
+    """Метрики железа ПК для Home Assistant."""
+    metrics = _get_system_metrics()
+    return jsonify({
+        "node": "argos-pc",
+        "cpu_temp": metrics.get("cpu_temp"),
+        "ram_used": metrics.get("ram_used"),
+        "gpu_vram": metrics.get("gpu_vram"),
+        "timestamp": datetime.now().isoformat(),
     }), 200
 
 

@@ -98,6 +98,7 @@ function Stop-StaleArgosProcesses {
             $_.Name -eq "python.exe" -and (
                 $_.CommandLine -match "main.py" -or
                 $_.CommandLine -match "web_server.py" -or
+                $_.CommandLine -match "argos_brain_api.py" -or
                 $_.CommandLine -match "telegram_bot.py"
             )
         }
@@ -115,6 +116,8 @@ function Stop-StaleArgosProcesses {
 function Stop-StaleArgosPortListeners {
     $ports = @(
         (Get-EnvInt "ARGOS_MCP_PORT" 8000),
+        (Get-EnvInt "BRAIN_API_PORT" 5001),
+        5001,
         (Get-EnvInt "ARGOS_WEB_PORT" 8080),
         (Get-EnvInt "ARGOS_DASHBOARD_PORT" 8090),
         47291

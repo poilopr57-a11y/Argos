@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argos-universalsigtrip"
-version = "2.1.3"
+version = "2.1.4"
 description = "ARGOS Universal OS — автономная кроссплатформенная ИИ-система с квантовой логикой, P2P, IoT и промышленными протоколами"
 readme = "README.md"
 license = { file = "LICENSE" }

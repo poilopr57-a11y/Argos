@@ -19,6 +19,14 @@ import argparse
 import json
 from pathlib import Path
 
+# Фикс кодировки вывода: консоль Windows в cp1251 не кодирует эмодзи/юникод
+# (иначе UnicodeEncodeError 'charmap' на 🔍/🤖 и вывод падает).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 # Добавляем src в путь
 sys.path.insert(0, str(Path(__file__).parent))
 

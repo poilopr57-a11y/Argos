@@ -58,6 +58,12 @@ RUN pip install --no-cache-dir \
     beautifulsoup4>=4.12.0 lxml>=5.0.0 \
     duckduckgo-search>=5.0.0 Pillow>=10.0.0
 
+# ── MCP API (Cloud Run) ───────────────────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    aiohttp>=3.9.0 \
+    fastapi>=0.110.0 \
+    "uvicorn[standard]>=0.29.0"
+
 # ── INDUSTRIAL PROTOCOLS (graceful) ──────────────────────────────────────────
 RUN pip install --no-cache-dir xknx>=3.1.0 opcua>=0.98.13 || \
     echo "[WARN] Промышленные протоколы: частично недоступны"
@@ -81,4 +87,4 @@ FROM base AS runtime
 
 USER argos
 EXPOSE 8080
-CMD ["python3", "main.py", "--no-gui"]
+CMD ["sh", "-c", "if [ \"${ARGOS_ENV:-local}\" = \"cloud\" ]; then python3 cloud_entry.py; else python3 main.py --no-gui; fi"]

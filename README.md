@@ -1,19 +1,19 @@
-# 👁️ ARGOS UNIVERSAL OS (v2.1.3)
-[![🏗️ Build ARGOS APK](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/build_apk.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/build_apk.yml)
-[![🚀 ARGOS Release — Сборка и публикация релиза](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/release.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/release.yml)
-[![📊 ARGOS Status Report](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/status_report.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/status_report.yml)
-[![🤖 Argos Auto-Publish Skills to PyPI](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/argos_evolution_publish.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/argos_evolution_publish.yml)
-[![🚀 ARGOS Release — Сборка и публикация релиза](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/release.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/release.yml)
-[![🖥️ Build ARGOS Windows setup.exe](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/build_windows.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/build_windows.yml)
-[![CI](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/ci.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/ci.yml)
-[![Docker](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/docker.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/docker.yml)
-[![Android APK](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/android-apk.yml/badge.svg)](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/android-apk.yml)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iliyaqdrwalqu/Argoss/blob/main/colab/ARGOS_Colab_Launch.ipynb)
+# 👁️ ARGOS UNIVERSAL OS (v2.1.4)
+[![🏗️ Build ARGOS APK](https://github.com/labuaqlysnecy/Argos/actions/workflows/build_apk.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/build_apk.yml)
+[![🚀 ARGOS Release — Сборка и публикация релиза](https://github.com/labuaqlysnecy/Argos/actions/workflows/release.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/release.yml)
+[![📊 ARGOS Status Report](https://github.com/labuaqlysnecy/Argos/actions/workflows/status_report.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/status_report.yml)
+[![🤖 Argos Auto-Publish Skills to PyPI](https://github.com/labuaqlysnecy/Argos/actions/workflows/argos_evolution_publish.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/argos_evolution_publish.yml)
+[![🚀 ARGOS Release — Сборка и публикация релиза](https://github.com/labuaqlysnecy/Argos/actions/workflows/release.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/release.yml)
+[![🖥️ Build ARGOS Windows setup.exe](https://github.com/labuaqlysnecy/Argos/actions/workflows/build_windows.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/build_windows.yml)
+[![CI](https://github.com/labuaqlysnecy/Argos/actions/workflows/ci.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/ci.yml)
+[![Docker](https://github.com/labuaqlysnecy/Argos/actions/workflows/docker.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/docker.yml)
+[![Android APK](https://github.com/labuaqlysnecy/Argos/actions/workflows/android-apk.yml/badge.svg)](https://github.com/labuaqlysnecy/Argos/actions/workflows/android-apk.yml)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/labuaqlysnecy/Argos/blob/main/colab/ARGOS_Colab_Launch.ipynb)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-# 👁️ ARGOS UNIVERSAL OS (v2.1.3)
+# 👁️ ARGOS UNIVERSAL OS (v2.1.4)
 
-> **Docker image:** `ghcr.io/iliyaqdrwalqu/argoss:latest` — published automatically on every push to `main`.  
-> **Android APK:** download the latest debug APK from the [Actions tab](https://github.com/iliyaqdrwalqu/Argoss/actions/workflows/android-apk.yml) → select the most recent run → expand **Artifacts** → download `argos-apk-debug-<run_number>`.
+> **Docker image:** `ghcr.io/labuaqlysnecy/Argos:latest` — published automatically on every push to `main`.  
+> **Android APK:** download the latest debug APK from the [Actions tab](https://github.com/labuaqlysnecy/Argos/actions/workflows/android-apk.yml) → select the most recent run → expand **Artifacts** → download `argos-apk-debug-<run_number>`.
 
 > *"Самовоспроизводящаяся кроссплатформенная экосистема ИИ с квантовой логикой,*
 > *P2P-подключением и интеграцией с IoT. Создана для цифрового бессмертия."*
@@ -76,7 +76,7 @@
 
 ## ✅ Проверка актуальности README
 
-README синхронизирован с текущим состоянием репозитория (ветка `iliyaqdrwalqu/Argoss`) и ориентирован на реальные файлы и точки входа:
+README синхронизирован с текущим состоянием репозитория (ветка `labuaqlysnecy/Argos`) и ориентирован на реальные файлы и точки входа:
 
 - ✅ Основной запуск: `python main.py` (файл `/main.py`).
 - ✅ Режимы запуска: `--no-gui`, `--mobile`, `--dashboard`, `--wake`, `--full`, `--shell`, `--root`.
@@ -272,7 +272,31 @@ ArgosUniversal/
 ```bash
 pip install -r requirements.txt
 
-# Ollama (обязательно для локального режима ИИ) — установить и запустить ДО старта ядра:
+### GPU: ROCm (AMD) в WSL2
+
+Для ускорения LLM на AMD GPU (RX 560/580/7000+) — установите ROCm в WSL2:
+
+```bash
+# 1. В PowerShell от админа:
+wsl --install -d Ubuntu-22.04
+
+# 2. В WSL Ubuntu:
+wget https://repo.radeon.com/amdgpu-install/7.2/ubuntu/jammy/amdgpu-install_7.2.70200-1_all.deb
+sudo apt install -y ./amdgpu-install_7.2.70200-1_all.deb
+sudo amdgpu-install --usecase=wsl,rocm --no-dkms -y
+export PATH=/opt/rocm/bin:$PATH
+
+# Для RX 560/580:
+export HSA_OVERRIDE_GFX_VERSION=10.3.0
+
+# 3. Установить Ollama:
+curl -fsSL https://ollama.ai/install.sh | sh
+ollama serve
+```
+
+Или используйте готовый скрипт: `bash install_rocm_wsl.sh`
+
+### Ollama (обязательно для локального режима ИИ) — установить и запустить ДО старта ядра:
 curl -fsSL https://ollama.com/install.sh | sh
 ollama serve
 
@@ -817,7 +841,7 @@ opcua browse ns=0;i=84             # обзор узлов OPC UA
 
 ```bash
 # Клонировать репозиторий
-git clone https://github.com/iliyaqdrwalqu/SiGtRiP.git && cd SiGtRiP
+git clone https://github.com/labuaqlysnecy/Argos.git && cd SiGtRiP
 
 # Скопировать и заполнить переменные окружения
 cp .env.example .env
@@ -836,7 +860,7 @@ docker-compose down
 ### Сборка образа вручную
 
 ```bash
-docker build -t argos-universal:2.1.3 .
+docker build -t argos-universal:2.1.4 .
 
 # Запуск контейнера напрямую
 docker run -d \
@@ -846,15 +870,15 @@ docker run -d \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/data:/app/data \
-  argos-universal:2.1.3
+  argos-universal:2.1.4
 ```
 
 ### GitHub Container Registry (GHCR)
 
 ```bash
 # Публичный образ (после релиза)
-docker pull ghcr.io/iliyaqdrwalqu/argoss:latest
-docker run -d --env-file .env ghcr.io/iliyaqdrwalqu/argoss:latest
+docker pull ghcr.io/labuaqlysnecy/Argos:latest
+docker run -d --env-file .env ghcr.io/labuaqlysnecy/Argos:latest
 ```
 
 ---
@@ -914,7 +938,7 @@ docker-compose --profile apk run apk_builder
 
 ### Google Colab (без установки)
 
-1. Открой ноутбук: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iliyaqdrwalqu/Argoss/blob/main/colab/ARGOS_Colab_Launch.ipynb)
+1. Открой ноутбук: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/labuaqlysnecy/Argos/blob/main/colab/ARGOS_Colab_Launch.ipynb)
 2. В последней ячейке выполни блок **APK-сборка**.
 
 ### GitHub Actions (автоматическая сборка)
@@ -925,13 +949,13 @@ docker-compose --profile apk run apk_builder
 
 ## ☁️ Google Colab — запуск без установки
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iliyaqdrwalqu/Argoss/blob/main/colab/ARGOS_Colab_Launch.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/labuaqlysnecy/Argos/blob/main/colab/ARGOS_Colab_Launch.ipynb)
 
 Ноутбук [`colab/ARGOS_Colab_Launch.ipynb`](colab/ARGOS_Colab_Launch.ipynb) запускает ARGOS в headless-режиме с HTTP Remote Control API и туннелем Cloudflare за ~3 минуты:
 
 | Шаг | Что делает |
 |-----|------------|
-| 1️⃣  Clone | `git clone https://github.com/iliyaqdrwalqu/Argoss` |
+| 1️⃣  Clone | `git clone https://github.com/labuaqlysnecy/Argos` |
 | 2️⃣  Секреты | Загружает токены из Colab Secrets (🔑) или переменных окружения |
 | 3️⃣  Зависимости | `fastapi`, `uvicorn`, `psutil` + опционально APK-тулинг |
 | 4️⃣  Старт ARGOS | Headless core + FastAPI Dashboard на порту 8080 |
@@ -957,7 +981,7 @@ docker-compose --profile apk run apk_builder
 
 ```bash
 # В ячейке Colab:
-!bash <(curl -fsSL https://raw.githubusercontent.com/iliyaqdrwalqu/Argoss/main/colab_start.sh)
+!bash <(curl -fsSL https://raw.githubusercontent.com/labuaqlysnecy/Argos/main/colab_start.sh)
 ```
 
 ---

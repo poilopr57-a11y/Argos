@@ -114,6 +114,14 @@ _PERMANENT_PROVIDER_ERROR_MARKERS = (
     "certificate verify failed",
 )
 
+_PROVIDER_ERROR_TEXT_MARKERS = (
+    "no api provider registered for api",
+    "provider not registered",
+    "no provider registered",
+    "api provider not found",
+    "no api provider",
+)
+
 
 class _SlidingWindowRateLimiter:
     def __init__(self, max_calls: int, window_seconds: int):
@@ -2515,6 +2523,26 @@ class ArgosCore:
                 reason,
             )
 
+    @staticmethod
+    def _looks_like_provider_error_text(answer) -> bool:
+        if not isinstance(answer, str):
+            return False
+        lowered = answer.strip().lower()
+        return any(marker in lowered for marker in _PROVIDER_ERROR_TEXT_MARKERS)
+
+    @staticmethod
+    def _normalize_provider_answer(answer):
+        if answer is None:
+            return None
+        if not isinstance(answer, str):
+            return answer
+        text = answer.strip()
+        if not text:
+            return None
+        if ArgosCore._looks_like_provider_error_text(text):
+            return None
+        return text
+
     def _get_gigachat_token(self) -> str | None:
         if not self._gigachat_access_token:
             alias_token = _read_secret_env("GIGACHAT_API_KEY")
@@ -2622,7 +2650,10 @@ class ArgosCore:
             return res.text
         except Exception as e:
             err_text = str(e).lower()
-            if any(x in err_text for x in ("api_key_invalid", "api key expired", "invalid api key")):
+            if any(x in err_text for x in ("429", "quota", "resource_exhausted", "rate limit")):
+                self._last_gemini_rate_limited = True
+                self._disable_provider_temporarily("Gemini", "quota/rate-limit (429)")
+            elif any(x in err_text for x in ("api_key_invalid", "api key expired", "invalid api key")):
                 self._disable_provider_temporarily("Gemini", "некорректный/просроченный API ключ")
             elif any(x in err_text for x in ("user location", "location is not supported", "failed_precondition")):
                 self._disable_provider_temporarily("Gemini", "geo-blocked (location not supported)")
@@ -4169,8 +4200,10 @@ class ArgosCore:
         if os.getenv("OLLAMA_AU_HOST", "").strip() and not self._is_provider_temporarily_disabled("Ollama-AU"):
             providers.append(("Ollama-AU", self._ask_ollama_au))
 
-        # Ollama (Argoss) — всегда последний fallback
-        providers.append(("Ollama (Argoss)", self._ask_ollama))
+        # Ollama (Argoss) — последний fallback, но cooldown должен уважаться.
+        ollama_argoss_available = not self._is_provider_temporarily_disabled("Ollama (Argoss)")
+        if ollama_argoss_available:
+            providers.append(("Ollama (Argoss)", self._ask_ollama))
 
         # HiveMind — Модель Общего Сознания
         if not self._is_provider_temporarily_disabled("HiveMind"):
@@ -4178,9 +4211,42 @@ class ArgosCore:
 
         if len(providers) <= self.auto_collab_max_models:
             return providers
+        if not ollama_argoss_available:
+            return providers[: self.auto_collab_max_models]
         # Гарантия: даже при лимите моделей Ollama всегда остается последним fallback.
         head = providers[: max(0, self.auto_collab_max_models - 1)]
         return head + [("Ollama (Argoss)", self._ask_ollama)]
+
+    def _get_consciousness_routing_signal(self) -> dict:
+        """Возвращает компактный сигнал CollectiveConsciousness для AI-роутинга."""
+        signal = {
+            "agreement_level": "unknown",
+            "conflict_count": 0,
+            "consensus_required": False,
+            "strict_consensus_n": getattr(self, "consensus_n", 2),
+        }
+        consciousness = getattr(self, "consciousness", None)
+        state = getattr(consciousness, "state", None)
+        recent = getattr(state, "recent_syntheses", None) or []
+        if not recent:
+            return signal
+
+        latest = recent[-1] if isinstance(recent[-1], dict) else {}
+        agreement = str(latest.get("agreement_level") or "unknown").strip().lower()
+        try:
+            conflict_count = int(latest.get("conflict_count") or 0)
+        except (TypeError, ValueError):
+            conflict_count = 0
+
+        signal["agreement_level"] = agreement
+        signal["conflict_count"] = conflict_count
+        if agreement == "conflicted" or conflict_count > 0:
+            signal["consensus_required"] = True
+            signal["strict_consensus_n"] = max(3, int(signal["strict_consensus_n"]))
+        elif agreement in {"mixed", "divergent", "uncertain"}:
+            signal["consensus_required"] = True
+            signal["strict_consensus_n"] = max(2, int(signal["strict_consensus_n"]))
+        return signal
 
     def _ask_auto_consensus(self, context: str, user_text: str) -> tuple[str | None, str | None]:
         providers = self._auto_providers()
@@ -4190,12 +4256,22 @@ class ArgosCore:
         # Режим без консенсуса — первый доступный провайдер
         if not self.auto_collab_enabled:
             for provider_name, fn in providers:
-                answer = fn(context, user_text)
+                answer = self._normalize_provider_answer(fn(context, user_text))
                 if answer:
                     return answer, provider_name
             return None, None
 
         # ── Консенсус: собираем ответы от нескольких провайдеров ─────────────
+        routing_signal = self._get_consciousness_routing_signal()
+        effective_consensus_n = self.consensus_n
+        if routing_signal.get("consensus_required"):
+            try:
+                effective_consensus_n = max(
+                    int(effective_consensus_n),
+                    int(routing_signal.get("strict_consensus_n") or effective_consensus_n),
+                )
+            except (TypeError, ValueError):
+                effective_consensus_n = self.consensus_n
         collected: list[tuple[str, str]] = []
         for provider_name, fn in providers:
             peer_block = ""
@@ -4208,7 +4284,7 @@ class ArgosCore:
                     "но не повторяй дословно и не упоминай названия моделей в финальном тексте:\n"
                     f"{peer_opinions}"
                 )
-            answer = fn(context + peer_block, user_text)
+            answer = self._normalize_provider_answer(fn(context + peer_block, user_text))
             if answer and answer.strip():
                 collected.append((provider_name, answer.strip()))
                 # Сообщаем коллективному сознанию о новой мысли
@@ -4222,10 +4298,10 @@ class ArgosCore:
             return None, None
 
         # Если собрали меньше consensus_n ответов — возвращаем лучший без синтеза
-        if len(collected) == 1 or len(collected) < self.consensus_n:
+        if len(collected) == 1 or len(collected) < effective_consensus_n:
             log.debug(
                 "[Consensus] Собрано %d/%d ответов — синтез пропущен, возвращаем первый",
-                len(collected), self.consensus_n,
+                len(collected), effective_consensus_n,
             )
             return collected[0][1], collected[0][0]
 
@@ -4246,7 +4322,7 @@ class ArgosCore:
 
         # Синтез делает ПЕРВЫЙ провайдер из уже опрошенных (он уже тёплый)
         first_name, first_fn = providers[0]
-        final_answer = first_fn(context, synthesis_prompt)
+        final_answer = self._normalize_provider_answer(first_fn(context, synthesis_prompt))
         used = "+".join(name for name, _ in collected)
         if final_answer and final_answer.strip():
             return final_answer.strip(), f"Consensus({used})→{first_name}"

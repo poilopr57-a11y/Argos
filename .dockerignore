@@ -50,6 +50,20 @@ config/private/
 
 # Large media / data (not needed in image)
 data/
+models/
+artifacts/
+backups/
+builds/
+tmp/
+reports/
+notebooks/
+memory/
+hf-*/
+argoss_clone/
+Kimi_Agent_Argos/
+ollama-copilot-master/
+openai-chatkit-advanced-samples/
+claude-code-templates/node_modules/
 docs/_build/
 *.mp4
 *.mp3

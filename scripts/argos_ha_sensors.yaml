@@ -3,6 +3,19 @@
 # ARGOS REST API живёт на Орионе: http://192.168.1.72:8002
 # Дополняет MQTT-publisher (153 сущности уже в HA). После правки — Перезагрузить HA.
 
+rest_command:
+  argos_query:
+    url: http://192.168.1.72:8002/api/argos/query
+    method: POST
+    content_type: application/json
+    payload: '{"query":"{{ query }}","context":{{ context | default({}) | tojson }}}'
+
+  argos_compress:
+    url: http://192.168.1.72:8002/api/argos/compression
+    method: POST
+    content_type: application/json
+    payload: '{"text":"{{ text }}","max_chars":{{ max_chars | default(4000) }},"store":true}'
+
 rest:
   # Системный статус Ориона (CPU/RAM/disk/GPU) — реальный psutil + nvidia-smi
   - resource: http://192.168.1.72:8002/api/system/status
@@ -37,6 +50,104 @@ rest:
         value_template: "{{ value_json.online }}"
         device_class: connectivity
 
+  # Headroom Compression — реальный reversible store ARGOS
+  - resource: http://192.168.1.72:8002/api/argos/stats
+    scan_interval: 60
+    sensor:
+      - name: "ARGOS Headroom Savings"
+        value_template: "{{ value_json.compression_ratio }}"
+        unit_of_measurement: "%"
+        icon: mdi:archive-arrow-down
+        json_attributes_path: "$.raw"
+        json_attributes:
+          - store_path
+          - strategies
+      - name: "ARGOS Headroom Items"
+        value_template: "{{ value_json.items }}"
+        icon: mdi:database
+
+  # ARGOS memory / Headroom store
+  - resource: http://192.168.1.72:8002/api/argos/memory
+    scan_interval: 60
+    sensor:
+      - name: "ARGOS Memory Cache Efficiency"
+        value_template: "{{ value_json.cache_efficiency }}"
+        unit_of_measurement: "%"
+        icon: mdi:brain
+      - name: "ARGOS Headroom Store Items"
+        value_template: "{{ value_json.headroom_items }}"
+        icon: mdi:database-clock
+
+  # FPGA XC7A35T / XDMA board detection
+  - resource: http://192.168.1.72:8002/api/fpga/status
+    scan_interval: 30
+    binary_sensor:
+      - name: "ARGOS FPGA XDMA Online"
+        value_template: "{{ value_json.online }}"
+        device_class: connectivity
+    sensor:
+      - name: "ARGOS FPGA Status"
+        value_template: "{{ value_json.status }}"
+        icon: mdi:expansion-card
+        json_attributes:
+          - device
+          - expected_pci_id
+          - pcie
+          - ddr3
+          - xdma_detected
+          - devices
+
+  # Neural accelerator readiness (safe diagnostic endpoint)
+  - resource: http://192.168.1.72:8002/api/nn/status
+    scan_interval: 30
+    binary_sensor:
+      - name: "ARGOS NN Accelerator Ready"
+        value_template: "{{ value_json.online }}"
+        device_class: connectivity
+    sensor:
+      - name: "ARGOS NN Backend"
+        value_template: "{{ value_json.backend }}"
+        icon: mdi:chip
+
+  # VPN / DNS privacy layer
+  - resource: http://192.168.1.72:8002/api/vpn/status
+    scan_interval: 30
+    binary_sensor:
+      - name: "ARGOS VPN Connected"
+        value_template: "{{ value_json.vpn_active }}"
+        device_class: connectivity
+    sensor:
+      - name: "ARGOS VPN Peers"
+        value_template: "{{ value_json.peers }}"
+        icon: mdi:vpn
+        json_attributes:
+          - interface
+          - protocol
+          - ip
+          - dns
+
+  - resource: http://192.168.1.72:8002/api/dns/leak-test
+    scan_interval: 300
+    sensor:
+      - name: "ARGOS DNS Security"
+        value_template: "{{ value_json.status }}"
+        icon: mdi:dns
+        json_attributes:
+          - dns_servers
+          - dns_leak_detected
+          - tested_external
+
+  - resource: http://192.168.1.72:8002/api/vpn/pihole/stats
+    scan_interval: 60
+    sensor:
+      - name: "ARGOS Pi-hole Block Percentage"
+        value_template: "{{ value_json.block_percentage | default(0) }}"
+        unit_of_measurement: "%"
+        icon: mdi:shield-check
+      - name: "ARGOS Pi-hole Ads Blocked"
+        value_template: "{{ value_json.ads_blocked_today | default(0) }}"
+        icon: mdi:shield-remove
+
 # Lovelace-карточка (вставить в дашборд):
 # - type: entities
 #   title: ARGOS Orion
@@ -47,3 +158,7 @@ rest:
 #     - sensor.orion_gpu_temp
 #     - sensor.orion_gpu_usage
 #     - binary_sensor.argos_brain_online
+#     - sensor.argos_headroom_savings
+#     - binary_sensor.argos_fpga_xdma_online
+#     - binary_sensor.argos_nn_accelerator_ready
+#     - binary_sensor.argos_vpn_connected

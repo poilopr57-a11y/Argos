@@ -60,3 +60,19 @@ class ArgosScrapper:
 
         except Exception as e:
             return f"Сбой сетевого сканирования: {str(e)}"
+
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status", "помощь"):
+            return "🔍 WebScrapper готов. Укажи поисковый запрос."
+        return self.quick_search(t)
+
+
+def execute(text: str = "") -> str:
+    """Модульная точка входа SkillLoader."""
+    s = ArgosScrapper()
+    t = (text or "").strip()
+    if not t:
+        return "🔍 WebScrapper готов. Укажи поисковый запрос."
+    return s.quick_search(t)

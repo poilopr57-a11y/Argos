@@ -113,12 +113,55 @@ class ArgosEvolution:
         return None
 
     def _ask_ai(self, role: str, prompt: str) -> str | None:
+        """Коллективная мощность: перебирает все рабочие провайдеры по приоритету.
+
+        Порядок: Grok → Groq → DeepSeek → OpenAI → Kimi → Cloudflare → Ollama.
+        Gemini пропускается — гео-блок.
+        Уважает ARGOS_DISABLE_* переменные и временно отключённых провайдеров.
+        """
         if not self.core:
             return None
-        answer = self.core._ask_gemini(role, prompt)
-        if answer:
-            return answer
-        return self.core._ask_ollama(role, prompt)
+
+        # Карта провайдер → env-флаг отключения
+        _PROVIDER_ENV_DISABLE = {
+            "Grok":       "ARGOS_DISABLE_GROK",
+            "Groq":       "ARGOS_DISABLE_GROQ",
+            "DeepSeek":   "ARGOS_DISABLE_DEEPSEEK",
+            "OpenAI":     "ARGOS_DISABLE_OPENAI",
+            "Kimi":       "ARGOS_DISABLE_KIMI",
+            "Cloudflare": "ARGOS_DISABLE_CLOUDFLARE",
+        }
+
+        def _env_disabled(name: str) -> bool:
+            return (os.getenv(name, "") or "").strip().lower() in {
+                "1", "true", "on", "yes", "да", "вкл"
+            }
+
+        # 1. OpenAI-совместимые провайдеры
+        for provider in ("Grok", "Groq", "DeepSeek", "OpenAI", "Kimi", "Cloudflare"):
+            # Проверяем env-флаг
+            env_flag = _PROVIDER_ENV_DISABLE.get(provider)
+            if env_flag and _env_disabled(env_flag):
+                continue
+            # Проверяем временный/постоянный дизейбл через core
+            if hasattr(self.core, "_is_provider_temporarily_disabled"):
+                if self.core._is_provider_temporarily_disabled(provider):
+                    continue
+            try:
+                answer = self.core._ask_openai_compat(role, prompt, provider_name=provider)
+                if answer and answer.strip():
+                    return answer
+            except Exception:
+                continue
+
+        # 2. Резерв — локальный Ollama (если не отключён)
+        try:
+            if not (hasattr(self.core, "_is_provider_temporarily_disabled")
+                    and self.core._is_provider_temporarily_disabled("Ollama")):
+                return self.core._ask_ollama(role, prompt)
+        except Exception:
+            pass
+        return None
 
     def _fallback_test_template(self) -> str:
         return (
@@ -263,7 +306,7 @@ class ArgosEvolution:
     def generate_skill(self, description: str) -> str:
         """Генерирует навык + тест и принимает только после review/test gate."""
         if not self.core:
-            log.error("Evolution: self.core is None! core=%s", self.core)
+            # log.error("Evolution: self.core is None! core=%s", self.core)
             return "❌ Нет доступа к ядру ИИ. Передай core при инициализации."
 
         prompt = (
@@ -343,7 +386,38 @@ class ArgosEvolution:
             desc = desc.replace(tr, "").strip()
         if not desc:
             return "🧬 Эволюция Аргоса: опиши какой навык создать.\nПример: \"эволюция: создай навык для мониторинга CPU\""
+        # Если после удаления триггеров осталась только статусная фраза —
+        # не генерируем навык, возвращаем None → SkillLoader упадёт в execute()
+        _STATUS_WORDS = {
+            "статус", "status", "info", "инфо", "помощь", "help",
+            "список", "list", "навыков", "скилов",
+        }
+        if desc.lower().strip() in _STATUS_WORDS:
+            return None
         return self.generate_skill(desc)
+
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        t_low = t.lower()
+        _STATUS_PHRASES = (
+            "", "статус", "status", "эволюция", "evolution",
+            "evolution статус", "evolution status",
+            "эволюция статус", "список скилов", "список навыков",
+            "info", "инфо", "помощь", "help",
+        )
+        if t_low in _STATUS_PHRASES:
+            skills = [f.stem for f in __import__('pathlib').Path(SKILLS_DIR).glob("*.py") if not f.stem.startswith("_")]
+            return (
+                f"🧬 ArgosEvolution готова. Навыков в ДНК: {len(skills)}\n"
+                "Для генерации: 'создай навык <описание>'\n"
+                "Пример: 'создай навык мониторинга GPIO'"
+            )
+        # Генерация только при явной команде
+        if any(k in t_low for k in ("создай навык", "разработай навык", "новый навык",
+                                     "генерируй skill", "create skill", "generate skill")):
+            return self.handle(t) or self.generate_skill(t)
+        return f"🧬 Evolution: неизвестная команда '{t}'. Пример: 'создай навык <описание>'"
 
 
 # Module-level handle for skill_loader

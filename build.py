@@ -368,7 +368,7 @@ _w(
 
     [project]
     name = "argos-universalsigtrip"
-    version = "2.1.3"
+    version = "2.1.4"
     description = "ARGOS — децентрализованная автономная ИИ-система"
     readme = "README.md"
     license = { text = "MIT" }

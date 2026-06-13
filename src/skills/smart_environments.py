@@ -5,6 +5,8 @@ smart_environments.py — Умные среды Аргоса
   Каждый оператор: мониторинг + управление + алерты + автоматика.
 """
 
+SKILL_DESCRIPTION = "Управление умным домом: сцены, окружения, IoT"
+
 import time, os
 from src.argos_logger import get_logger
 from src.event_bus import get_bus, Events
@@ -494,15 +496,156 @@ class SmartEnvironmentManager:
                 return v
         return None
 
+    def _ha_climate_temp(self, entity_id: str, temp: int) -> str:
+        import os, urllib.request, json
+        HA = os.getenv("HA_URL", "http://localhost:8123")
+        TOKEN = os.getenv("HA_TOKEN", "")
+        if not TOKEN: return f"[SIM] setpoint={temp}"
+        payload = json.dumps({"entity_id": entity_id, "temperature": temp}).encode()
+        try:
+            req = urllib.request.Request(
+                f"{HA}/api/services/climate/set_temperature",
+                data=payload,
+                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            urllib.request.urlopen(req, timeout=5)
+            return f"✅ Пол: температура {temp}°C"
+        except Exception as e:
+            return f"❌ {e}"
+
+    def _ha_status(self) -> str:
+        import os, urllib.request, json
+        HA = os.getenv("HA_URL", "http://localhost:8123")
+        TOKEN = os.getenv("HA_TOKEN", "")
+        if not TOKEN: return "HA_TOKEN не задан"
+        try:
+            req = urllib.request.Request(f"{HA}/api/states",
+                headers={"Authorization": f"Bearer {TOKEN}"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                states = json.loads(r.read())
+            lights = {x['entity_id']: x['state'] for x in states if x['entity_id'].startswith('light.')}
+            on_lights = [x['attributes'].get('friendly_name', eid) for eid, st in lights.items() for x in states if x['entity_id'] == eid and st == 'on']
+            temp = next((x['state'] for x in states if 'temperature_humidity_sensor_temperature' in x['entity_id']), '?')
+            hum = next((x['state'] for x in states if 'humidity' in x['entity_id'] and x['state'] not in ('unavailable','unknown')), '?')
+            door = next((x['state'] for x in states if 'dver_door' in x['entity_id']), '?')
+            pol = next((x['state'] for x in states if x['entity_id'] == 'climate.pol'), '?')
+            return (f"🏠 Дом:\n"
+                    f"💡 Свет: {', '.join(on_lights) or 'всё выключено'}\n"
+                    f"🌡 Температура: {temp}°C, влажность: {hum}%\n"
+                    f"🚪 Дверь: {'открыта' if door == 'on' else 'закрыта'}\n"
+                    f"🔥 Тёплый пол: {pol}")
+        except Exception as e:
+            return f"❌ {e}"
+
+    def _ha_call(self, service: str, entity_id: str) -> str:
+        """Реальный вызов Home Assistant API."""
+        import os, urllib.request, json
+        HA = os.getenv("HA_URL", "http://localhost:8123")
+        TOKEN = os.getenv("HA_TOKEN", "")
+        if not TOKEN:
+            return "[SIM] HA_TOKEN не задан"
+        domain, svc = service.split(".")
+        payload = json.dumps({"entity_id": entity_id}).encode()
+        try:
+            req = urllib.request.Request(
+                f"{HA}/api/services/{domain}/{svc}",
+                data=payload,
+                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            urllib.request.urlopen(req, timeout=5)
+            return f"✅ {service} → {entity_id}"
+        except Exception as e:
+            return f"❌ HA: {e}"
+
+    def _ha_light(self, action: str, room: str = "") -> str:
+        """Управление светом через HA API."""
+        import os, urllib.request, json
+        HA = os.getenv("HA_URL", "http://localhost:8123")
+        TOKEN = os.getenv("HA_TOKEN", "")
+        if not TOKEN:
+            return self.home.lights_on(room) if action == "on" else self.home.lights_off(room)
+        # Маппинг комнат → entity_id HA
+        _ROOM_MAP = {
+            "коридор": "light.dom_switch_1",
+            "коридоре": "light.dom_switch_1",
+            "туалет": "light.dom_switch_2",
+            "туалете": "light.dom_switch_2",
+            "кухня": "light.dom_switch_3",
+            "кухне": "light.dom_switch_3",
+            "ванная": "light.dom_switch_4",
+            "ванной": "light.dom_switch_4",
+            "подсветка": "light.dom_backlight",
+            "подсветку": "light.dom_backlight",
+        }
+        if room and room in _ROOM_MAP:
+            eid = _ROOM_MAP[room]
+            return self._ha_call(f"light.turn_{action}", eid)
+        elif not room or room == "all":
+            # Все световые группы
+            results = []
+            for nm, eid in _ROOM_MAP.items():
+                r = self._ha_call(f"light.turn_{action}", eid)
+                if "✅" in r:
+                    results.append(nm)
+            return f"✅ Свет {'включён' if action=='on' else 'выключен'}: {', '.join(results) or 'везде'}"
+        else:
+            return f"❓ Комната '{room}' не найдена. Доступно: {', '.join(_ROOM_MAP.keys())}"
+
     def process_command(self, text: str) -> str | None:
         t = text.lower()
-        # Дом
+
+        # ── Управление светом (реальное HA API) ────────────────────
+        _is_on  = any(w in t for w in ("включи", "включить", "вкл", "зажги"))
+        _is_off = any(w in t for w in ("выключи", "выключить", "выкл", "погаси", "потуши"))
+        if _is_on or _is_off:
+            if any(w in t for w in ("свет", "лампу", "освещение", "весь", "все")):
+                room = self._extract_room(t)
+                return self._ha_light("on" if _is_on else "off", room)
+
+        # ── Розетка ПК ──────────────────────────────────────────────
+        if any(w in t for w in ("розетку", "розетка", "комп", "пк", "компьютер")) and not "разетку" in t:
+            action = "on" if _is_on else ("off" if _is_off else None)
+            if action:
+                return self._ha_call(f"switch.turn_{action}", "switch.dian_nao_socket_1")
+
+        # ── Тёплый пол ──────────────────────────────────────────────
+        if any(w in t for w in ("пол", "тёплый", "теплый", "обогрев")):
+            if _is_on:
+                return self._ha_call("climate.turn_on", "climate.pol")
+            elif _is_off:
+                return self._ha_call("climate.turn_off", "climate.pol")
+            elif "температур" in t:
+                import re
+                nums = re.findall(r'\d+', t)
+                if nums:
+                    temp = int(nums[0])
+                    return self._ha_climate_temp("climate.pol", temp)
+
+        # ── Сцены ────────────────────────────────────────────────────
+        if "вечерний" in t or "вечер" in t:
+            r = self._ha_call("scene.turn_on", "scene.вечерний_режим")
+            if "❌" in r:  # Fallback
+                self._ha_light("off", "коридор"); self._ha_light("off", "туалет")
+                self._ha_light("on", "кухня"); self._ha_light("on", "ванная")
+                return "✅ Вечерний режим: кухня + ванная"
+            return r
+        if "утренний" in t or "утро" in t or "рабочий" in t:
+            self._ha_light("on", ""); # всё
+            return "✅ Утренний режим: весь свет включён"
+
+        # ── Статус дома ──────────────────────────────────────────────
+        if any(w in t for w in ("статус", "состояние", "дом", "что включено")):
+            return self._ha_status()
+
+        # Старые паттерны
         if "свет включи" in t or "свет вкл" in t:
             room = self._extract_room(t)
-            return self.home.lights_on(room)
+            return self._ha_light("on", room)
         if "свет выключи" in t or "свет выкл" in t:
             room = self._extract_room(t)
-            return self.home.lights_off(room)
+            return self._ha_light("off", room)
         if "температура дома" in t or "климат дома" in t:
             return self.home.climate_report()
         if "безопасность" in t or "охрана" in t:
@@ -561,13 +704,27 @@ class SmartEnvironmentManager:
         # Полный отчёт
         if any(k in t for k in ["умные среды", "все системы", "полный отчёт"]):
             return self.full_report()
+        # Статус отдельных сред
+        if any(k in t for k in ["умный дом статус", "дом статус", "home status"]):
+            return self.home.report()
+        if any(k in t for k in ["погреб статус", "cellar status"]):
+            return self.cellar.report()
+        if any(k in t for k in ["аквариум статус", "aquarium status"]):
+            return self.aquarium.report()
         return None
 
     def _extract_room(self, text: str) -> str:
-        for room in ["гостиная", "спальня", "кухня", "ванная", "living", "bedroom", "kitchen"]:
-            if room in text:
+        _ROOMS = {
+            "кухня": "кухня", "кухне": "кухня", "кухню": "кухня",
+            "коридор": "коридор", "коридоре": "коридор", "коридору": "коридор", "колидор": "коридор",
+            "туалет": "туалет", "туалете": "туалет",
+            "ванная": "ванная", "ванной": "ванная", "ванну": "ванная",
+            "подсветка": "подсветка", "подсветку": "подсветка",
+        }
+        for word, room in _ROOMS.items():
+            if word in text:
                 return room
-        return "all"
+        return ""  # пустая строка = вся квартира
 
 
 # Alias для совместимости с skill_loader и core.py
@@ -586,12 +743,22 @@ class SmartEnvironmentsSkill:
     def full_report(self) -> str:
         return self.mgr.full_report()
 
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status", "отчёт", "отчет"):
+            return self.full_report()
+        return self.handle(t)
+
 
 TRIGGERS = [
-    "умный дом", "умные среды", "свет включи", "свет выключи",
+    "умный дом", "умные среды",
+    "свет включи", "свет выключи", "включи свет", "выключи свет",
+    "включить свет", "выключить свет",
     "климат дома", "температура дома", "полив", "теплица",
     "гараж", "погреб", "инкубатор", "аквариум", "безопасность дома",
     "ворота", "автополив", "полный отчёт",
+    "кухне", "зале", "спальне", "туалете",  # комнаты
 ]
 
 _skill_instance = None
@@ -604,7 +771,9 @@ def handle(text: str, core=None) -> str | None:
         return None
     if _skill_instance is None:
         _skill_instance = SmartEnvironmentsSkill()
-    return _skill_instance.handle(text)
+    result = _skill_instance.mgr.process_command(text)
+    # Если команда не распознана — возвращаем None чтобы ИИ мог ответить
+    return result if result is not None else None
 
 
 def setup(core=None):

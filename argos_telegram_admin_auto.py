@@ -653,7 +653,9 @@ class ArgosTelegramAdmin:
         if not chat_id or not user_id or not text:
             return
         if not self.is_admin(int(user_id)):
-            self.tg.answer(int(chat_id), "Access denied.")
+            # Бот состоит в общем Council-чате с другими entity-ботами; раньше
+            # отвечал "Access denied." на КАЖДОЕ их сообщение (396 раз за 2 дня,
+            # ~25% всего чата) — теперь молча игнорирует чужие сообщения.
             return
         try:
             action, args = parse_command(text)

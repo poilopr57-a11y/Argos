@@ -10,6 +10,8 @@ huggingface_ai.py — Интеграция с Hugging Face Inference Providers.
 
 from __future__ import annotations
 
+SKILL_DESCRIPTION = "HuggingFace Inference: пул токенов, round-robin"
+
 import json
 import math
 import os
@@ -201,8 +203,12 @@ def _parse_dataset_ref(ref: str) -> str:
 def _resolve_model_env() -> dict[str, Any]:
     """
     Возвращает ref для ОБЩЕЙ модели (text gen / inference).
+    Приоритет: HUGGINGFACE_TEXT_MODEL > HUGGINGFACE_MODEL > DEFAULT_EMBED_MODEL.
     HUGGINGFACE_MODEL_SPACE предназначен ТОЛЬКО для embeddings — здесь не используется.
     """
+    text_model = os.getenv("HUGGINGFACE_TEXT_MODEL", "").strip()
+    if text_model:
+        return _parse_model_ref(text_model)
     model_val = os.getenv("HUGGINGFACE_MODEL", DEFAULT_EMBED_MODEL).strip()
     return _parse_model_ref(model_val)
 
@@ -919,13 +925,23 @@ class HuggingFaceAI:
     # Unified command handler (вызывается из core.py)
     # ─────────────────────────────────────────────────────────────────────────
 
+    def execute(self, text: str = "") -> str:
+        """Точка входа SkillLoader."""
+        t = (text or "").strip()
+        if not t or t.lower() in ("статус", "status"):
+            return self.run()
+        result = self.handle(t)
+        if result is not None:
+            return result
+        return self.run()
+
     def handle(self, text: str) -> str | None:
         """
         Единая точка входа для HF-команд из core.py.
         Разбирает команды вида: hf <sub> [args...] [:: extra]
-        
+
         Возвращает None если текст не содержит HF команд.
-        
+
         Команды:
           hf status / hf статус          — статус пула токенов
           hf spaces                       — список алиасов Space
@@ -1073,36 +1089,6 @@ class HuggingFaceAI:
             "  hf echo [запрос]       — echo_env диагностика\n"
             "  hf netgoat <цель>      — сетевой AI анализ\n"
             "  hf prompts [запрос]    — поиск в prompts.chat\n"
-            "  hf random [N]          — N случайных промптов\n"
-            "  hf index <dataset>     — индексировать датасет\n"
-            "  hf search <запрос>     — семантический поиск\n"
-            "  hf space <alias> [text]— произвольный Space\n"
-            "  hf ask <текст>         — text generation\n"
+            "  hf random [N]          — N случайных моделей\n"
         )
-        return None  # Не перехватываем все сообщения
-
-
-TRIGGERS = [
-    "hf ", "huggingface", "hugging face", "hf status", "hf spaces",
-    "hf voiceclone", "hf joycaption", "hf sentiment", "hf finance",
-    "hf datasetgen", "hf echo", "hf netgoat", "hf prompts",
-    "hf random", "hf index", "hf search", "hf space", "hf ask",
-    "hf embed", "huggingfaceai",
-]
-
-_hf_instance = None
-
-
-def handle(text: str, core=None) -> str | None:
-    global _hf_instance
-    t = (text or "").lower()
-    if not any(tr in t for tr in TRIGGERS):
-        return None
-    if _hf_instance is None:
-        _hf_instance = HuggingFaceAI()
-    return _hf_instance.handle(text)
-
-
-def setup(core=None):
-    pass
-      
+        return help_text
