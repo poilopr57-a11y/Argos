@@ -1,0 +1,31 @@
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+# Install system dependencies and WireGuard tools
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    wireguard-tools \
+    iptables \
+    ip6tables \
+    && pip install --no-cache-dir --default-timeout=120 \
+    fastapi \
+    uvicorn \
+    aiohttp \
+    psutil \
+    python-telegram-bot==20.7
+
+# Copy the application code
+COPY ./src/vpn_api.py /app/vpn_api.py
+COPY ./src/vpn_service /app/src/vpn_service
+COPY ./railway.json /app/railway.json
+
+ENV PYTHONPATH=/app
+ENV ARGOS_VPN_DRY_RUN=true
+
+# Expose the port
+EXPOSE 8004
+
+# Start the application (respects Railway $PORT env)
+CMD ["python", "-u", "-c", "import os; port = os.getenv('PORT', '8004'); import uvicorn; uvicorn.run('vpn_api:app', host='0.0.0.0', port=int(port), log_level='info')"]
