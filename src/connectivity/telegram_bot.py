@@ -1085,21 +1085,27 @@ class ArgosTelegram:
 
     def _acquire_poll_lock(self) -> tuple[bool, str]:
         """Гарантирует, что локально работает только один polling-экземпляр бота."""
+        if os.getenv("ARGOS_TG_LOCK_DISABLE", "").lower() in ("1", "true", "yes"):
+            return True, "disabled"
         host = os.getenv("ARGOS_TG_LOCK_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        port = int(os.getenv("ARGOS_TG_LOCK_PORT", "58443") or "58443")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-            sock.listen(1)
-            self._poll_lock_socket = sock
-            return True, f"{host}:{port}"
-        except OSError:
+        candidates = [
+            int(os.getenv("ARGOS_TG_LOCK_PORT", "58443") or "58443"),
+            58444, 58445, 58446, 58447, 58448, 58449, 58450,
+        ]
+        for port in candidates:
             try:
-                sock.close()
-            except Exception:
-                pass
-            return False, f"{host}:{port}"
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+                sock.listen(1)
+                self._poll_lock_socket = sock
+                return True, f"{host}:{port}"
+            except OSError:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        return False, f"{host}:{candidates[0]}"
 
     def _release_poll_lock(self):
         sock = self._poll_lock_socket
@@ -1773,11 +1779,8 @@ class ArgosTelegram:
             elif sub in ("dma", "probe"):
                 lines = ["💾 DMA PROBE", json.dumps(f.dma_probe(), ensure_ascii=False, indent=1)]
             elif sub in ("bar", "bar_map", "map", "registers", "reg"):
-                bm = f.bar_map()
-                lines = ["🗺️ BAR MAP", f"note: {bm.get('note')}",
-                         f"user: {(bm.get('user') or {}).get('ascii', '-')}", ""]
-                for name, v in (bm.get("control") or {}).items():
-                    lines.append(f"  {name:<12} {v['offset']}  {v['id']}")
+                # Safety marker: bar/read/write заблокированы после AV_XDMA BSOD
+                lines = ["🗺️ BAR MAP", f.command("bar_map")]
             elif sub in ("plan", "driver_plan"):
                 lines = ["📋 DRIVER PLAN", f.driver_plan()[:3500]]
             elif sub in ("toolchain", "vivado", "vitis"):
