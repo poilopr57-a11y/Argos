@@ -76,6 +76,7 @@ def _webapp_html() -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Argos</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color,#e8ecf4);font-family:sans-serif;font-size:15px;height:100dvh;display:flex;flex-direction:column}
@@ -100,7 +101,7 @@ body{background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color
 </div>
 <script>
 var tg = window.Telegram.WebApp;
-if (tg) tg.expand();
+if (tg) { tg.ready(); tg.expand(); }
 var chat = document.getElementById('chat');
 var input = document.getElementById('input');
 var send = document.getElementById('send');
