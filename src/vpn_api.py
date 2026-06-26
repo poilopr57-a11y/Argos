@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.vpn_service.api import router as vpn_service_router
+from src.argos_miniapp_router import router as argos_miniapp_router
 
 # Настройка логирования
 logging.basicConfig(
@@ -30,6 +31,7 @@ app = FastAPI(
 )
 
 app.include_router(vpn_service_router)
+app.include_router(argos_miniapp_router)
 
 
 # Модели данных
