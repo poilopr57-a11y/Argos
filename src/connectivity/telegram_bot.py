@@ -1182,15 +1182,21 @@ class ArgosTelegram:
     def run(self):
         """Блокирующий запуск Telegram бота (используется в отдельном потоке)."""
         import asyncio as _asyncio
+        import logging as _logging
+        _log = _logging.getLogger("argos.tg")
+        # Redirect stdout/stderr if no console (Task Scheduler on Windows)
+        import sys as _sys
+        if _sys.stdout is None or not hasattr(_sys.stdout, 'write'):
+            _sys.stdout = open(_sys.devnull or 'nul', 'w')
         ok, reason = self.can_start()
         if not ok:
-            print(f"[TG] launch blocked: {reason}", flush=True)
+            _log.warning("Telegram launch blocked: %s", reason)
             return
         lock_ok, lock_addr = self._acquire_poll_lock()
         if not lock_ok:
-            print(f"[TG] polling lock busy on {lock_addr}", flush=True)
+            _log.warning("Telegram polling lock busy: %s", lock_addr)
             return
-        print(f"[TG] polling lock acquired on {lock_addr}", flush=True)
+        _log.info("Telegram polling lock acquired: %s", lock_addr)
         retry_delay = max(3, int(os.getenv("TG_RETRY_DELAY_SEC", "8") or "8"))
         retries = 0
         try:
