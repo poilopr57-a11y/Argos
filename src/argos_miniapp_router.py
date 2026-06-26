@@ -15,6 +15,7 @@ router = APIRouter(prefix="/argos", tags=["argos"])
 MINIAPP_VERSION = "1.0.0"
 _STARTED_AT = time.time()
 _SERVER_IP = os.getenv("ARGOS_VPN_SERVER_IP", "34.6.44.38")
+_MCP_TARGET = os.getenv("ARGOS_MCP_TARGET", "http://127.0.0.1:8000/mcp")
 
 
 def _psutil_info() -> dict[str, Any]:
@@ -107,7 +108,7 @@ async def _handle_command(text: str) -> str:
             "Для AI: @Argosssbot"
         )
 
-    # Try MCP proxy fallback
+    # Try MCP proxy fallback to real ARGOS
     try:
         import aiohttp
         body = {
@@ -116,7 +117,7 @@ async def _handle_command(text: str) -> str:
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "http://127.0.0.1:8000/mcp", json=body,
+                _MCP_TARGET, json=body,
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 data = await resp.json()
