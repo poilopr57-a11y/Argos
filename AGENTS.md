@@ -1,5 +1,17 @@
 # Memory
 
+## Session — 2026-06-27
+- Action: Деплой ARGOS Mini-App на GCP + фикс Telegram polling
+- Результат:
+  - Mini-App: `https://vpn.argosssss.win/argos/webapp` — 4 вкладки, локальная обработка команд без MCP
+  - **HTTPS через Caddy**: `https://miniapp.argosssss.win/argos/webapp` (без Cloudflare, чтобы избежать JS-челленджа)
+  - Telegram polling починен: `print()` при отсутствии консоли (Task Scheduler) + fallback порты
+  - MCP статус: проверяет `admin.tg_bot` вместо `core.telegram_bot`
+  - VPN: серверный ключ в Docker контейнере, конфиг валидный
+  - `poilopr57@gmail.com` — Compute Admin на проект
+- Файлы: `src/argos_miniapp_router.py`, `src/mcp_api.py`, `src/connectivity/telegram_bot.py`, `src/vpn_api.py`, `Dockerfile.vpn_api`
+- Статус: Mini-App работает на GCP
+
 ## Session — 2026-06-26
 - Action: Деплой полноценного Argos VPN на Railway (WebApp) + GCP (real VPN с WireGuard)
 - Результат:
@@ -4071,3 +4083,5 @@ After each task return:
 - Mode: server
 - PID: 6860
 - URL: http://localhost:18765
+
+## Pi Shutdown вЂ” 2026-06-27 00:54
