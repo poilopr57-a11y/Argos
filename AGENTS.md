@@ -1,20 +1,42 @@
 # Memory
 
 ## Session — 2026-06-26
-- Action: Деплой полноценного Argos VPN WebApp на Railway с QR, графиком трафика, выбором серверов и управлением конфигом
+- Action: Деплой полноценного Argos VPN на Railway (WebApp) + GCP (real VPN с WireGuard)
 - Результат:
-  - Новая версия WebApp задеплоена на `https://vpn-api-production-c91b.up.railway.app/vpn/webapp`
-  - 4 вкладки (Status, Config, Servers, Profile), QR-код, canvas-график, копирование/скачивание/удаление, продление подписки
-  - API endpoints работают: `/vpn/servers`, `/vpn/client/{telegram_id}`, `/vpn/client/extend`, `/vpn/qr/{telegram_id}`, `/vpn/client/create`
-  - Telegram Menu Button настроен на WebApp для `@argoossso_vpn_bot`
+  - Railway: WebApp задеплоена (4 вкладки, QR, график, выбор серверов) — `https://vpn-api-production-c91b.up.railway.app/vpn/webapp`
+  - **GCP VM создана**: `argos-vpn-eu` (e2-small, Debian 12) в `europe-west4-a`, IP `34.6.44.38`, порт `51820/UDP`
+  - **WireGuard** запущен: `wg0` на `10.0.0.1/24`, серверный ключ `KJPpkpgajLD/...`
+  - **Cloudflare tunnel** `vpn.argosssss.win` → GCP VM (:8004) — DNS CNAME создан
+  - **Docker контейнер** `argos-vpn-api` с `--network=host --privileged`, реальный WireGuard (dry-run=false)
+  - **Telegram Menu Button** для `@argoossso_vpn_bot` → `https://vpn.argosssss.win/vpn/webapp`
+  - API endpoints работают: create/status/extend/delete/QR/servers — все через Cloudflare tunnel ✅
 - Исправлено:
-  - `src/vpn_service/wg_manager.py`: dry-run режим генерирует корректные base64 ключи (не urlsafe), `_safe_key` regex заанкерен и проверяет длину
+  - `src/vpn_service/wg_manager.py`: dry-run ключи base64 (не urlsafe), `_safe_key` regex заанкерен
 - Проблемы и решения:
-  - Railway CLI не работал (токен `ed9f6767-...` истёк) — использовали GraphQL API напрямую с рабочим токеном
-  - `serviceInstanceRedeploy` и `serviceInstanceDeployV2` деплоили старый коммит — помог `serviceConnect` для обновления HEAD
-  - Авто-деплой GitHub нельзя настроить через API (нет доступа проекта к репо) — создан helper `scripts/deploy_vpn_railway.py`
-- Файлы: `src/vpn_service/api.py` (новый webapp), `src/vpn_service/wg_manager.py` (fix), `scripts/deploy_vpn_railway.py`
-- Статус: WebApp работает; для обновлений используй `python scripts/deploy_vpn_railway.py` с `RAILWAY_API_TOKEN`
+  - Railway CLI токен истёк — GraphQL API напрямую с новым токеном `99814def-...`
+  - `serviceInstanceRedeploy/DeployV2` деплоили старый коммит — `serviceConnect` обновляет HEAD
+  - Cloudflare токены из `.env` невалидны — использовали `cloudflared login` (существующий `cert.pem`)
+  - Docker контейнер занимал порт 51820 — переключили на `--network=host`
+  - WireGuard `wg0` не существовал — установлен и настроен на VM
+- Файлы: `src/vpn_service/api.py`, `src/vpn_service/wg_manager.py`, `scripts/deploy_vpn_railway.py`, `deploy/gcp/vpn/deploy.ps1`, `deploy/gcp/vpn/startup.sh`
+- Статус: VPN работает; для редеплоя Railway используй `python scripts/deploy_vpn_railway.py`
+
+## Session — 2026-06-26 (SPR2801 Linux shim)
+- Action: Создан Linux LD_PRELOAD-адаптер для vendor `libGTILibrary.so`, безопасный путь к реальному NPU через `/dev/xdma*`
+- Результат:
+  - Dry-run через настоящий `libGTILibrary.so` прошёл успешно: `GtiCreateModel=ok`, `GtiEvaluate=ok`, 17 ioctl, 1461 H2C write (2.96 MB), 16 C2H read (32 KB)
+  - Подменяются `/dev/gti2800-0` и `/dev/gti2803-0`; fake `mmap` shadow-buffer в RAM
+  - Live-режим включается только токеном `SPR2801_SHIM_LIVE=I_ACCEPT_LINUX_XDMA_LIVE`
+- Файлы:
+  - `artifacts/spr2801_gti_shim/gti2800_xdma_shim.c`
+  - `artifacts/spr2801_gti_shim/spr2801_vendor_runner.cpp`
+  - `artifacts/spr2801_gti_shim/run_vendor_shim_dryrun.sh`
+  - `artifacts/spr2801_gti_shim/run_vendor_shim_live.sh` (новый)
+  - `artifacts/spr2801_gti_shim/LIVE_CHECKLIST.md` (новый)
+  - `reports/spr2801_gti_shim_latest.md`
+  - `tests/test_spr2801_gti_shim_artifact.py` (добавлен тест live-скрипта)
+- Проверка: `pytest tests/test_spr2801_gti_shim_artifact.py -q` → 3 passed
+- Статус: готово к live-запуску на bare-metal Linux с реальными `/dev/xdma0_h2c_0`, `/dev/xdma0_c2h_0`, `/dev/xdma0_user`
 
 ## Telegram Fix — 2026-05-24 09:00
 - **Root cause**: Telegram молчал из-за split-brain: Task Scheduler (Start Argos on Logon, ARGOS_BOT_STARTUP, ARGOS_BOT_PERM, ARGOS_BOT_NOW, ARGOS_TelegramBot, ArgosRestart) запускал лаунчер, который стартовал `run_telegram_bot.py` (создаёт отдельный ArgosCore+MCP) И `main.py` одновременно. Два экземпляра дрались за порты 8000/8090/47291, Telegram polling thread не мог установить long-poll.
