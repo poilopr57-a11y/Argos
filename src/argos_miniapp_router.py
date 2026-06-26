@@ -80,13 +80,13 @@ def _webapp_html() -> str:
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;
-  background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color,#e8ecf4);padding:0;min-height:100vh;overflow-x:hidden}
+  background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color,#e8ecf4);padding:0;min-height:100vh;overflow-x:hidden;-webkit-overflow-scrolling:touch;user-select:none;-webkit-user-select:none}
 .wrap{max-width:480px;margin:0 auto;padding:16px 16px 80px}
 .card{background:var(--tg-theme-secondary-bg-color,#1a1f2e);border-radius:12px;padding:16px;margin:12px 0}
 .card-title{font-size:15px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .btn{display:block;width:100%;padding:14px;margin:8px 0;border:none;border-radius:10px;
   background:var(--tg-theme-button-color,#2563eb);color:var(--tg-theme-button-text-color,#fff);
-  font-size:16px;font-weight:500;cursor:pointer;transition:opacity .15s}
+  font-size:16px;font-weight:500;cursor:pointer;transition:opacity .15s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .btn:active{opacity:.7}.btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-sm{padding:10px;font-size:13px;width:auto;display:inline-block;margin:4px}
 .btn-outline{background:transparent;border:1px solid var(--tg-theme-button-color,#2563eb);color:var(--tg-theme-button-color,#2563eb)}
