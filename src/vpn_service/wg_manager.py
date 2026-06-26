@@ -50,16 +50,19 @@ class WireGuardManager:
         key = key.strip()
         if not key:
             raise ValueError("empty key")
-        if len(key) > 64 or not re.match(r"^[A-Za-z0-9+/=]+", key):
+        if not re.match(r"^[A-Za-z0-9+/=]{40,48}$", key):
             raise ValueError("invalid key format")
         return key
 
     def generate_keypair(self) -> dict[str, str]:
         if self.dry_run:
+            import base64
             import secrets
 
-            priv = secrets.token_urlsafe(44)
-            pub = secrets.token_urlsafe(44)
+            raw_priv = secrets.token_bytes(32)
+            raw_pub = secrets.token_bytes(32)
+            priv = base64.b64encode(raw_priv).decode()
+            pub = base64.b64encode(raw_pub).decode()
             return {"private_key": priv, "public_key": pub}
         try:
             priv = subprocess.check_output(["wg", "genkey"], text=True, timeout=5).strip()
