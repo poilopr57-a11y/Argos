@@ -106,7 +106,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 .tabs{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--tg-theme-bg-color,#0b0f19);border-top:1px solid rgba(255,255,255,.06);z-index:100;max-width:480px;margin:0 auto}
 .tab{flex:1;padding:12px 4px;text-align:center;font-size:11px;color:var(--tg-theme-hint-color,#8e94a2);cursor:pointer;transition:.15s;border:none;background:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .tab.active{color:var(--tg-theme-button-color,#2563eb);font-weight:600}
-.tab .tab-icon{font-size:20px;display:block;margin-bottom:2px}
 .chat-box{height:50vh;overflow-y:auto;padding:12px;border-radius:10px;background:var(--tg-theme-secondary-bg-color,#1a1f2e);margin:12px 0;display:flex;flex-direction:column;gap:8px}
 .chat-msg{padding:10px 14px;border-radius:12px;max-width:85%;word-break:break-word;font-size:14px;line-height:1.4}
 .chat-user{background:var(--tg-theme-button-color,#2563eb);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
@@ -144,10 +143,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
   </div>
 </div>
 <div class="tabs" id="tabs">
-  <button class="tab active" data-tab="chat" onclick="switchTab('chat')"><span class="tab-icon">Chat</span>Chat</button>
-  <button class="tab" data-tab="status" onclick="switchTab('status')"><span class="tab-icon">Status</span>Status</button>
-  <button class="tab" data-tab="skills" onclick="switchTab('skills')"><span class="tab-icon">Skills</span>Skills</button>
-  <button class="tab" data-tab="more" onclick="switchTab('more')"><span class="tab-icon">More</span>More</button>
+  <button class="tab active" id="chatTab" onclick="showTab('chat')">Chat</button>
+  <button class="tab" id="statusTab" onclick="showTab('status')">Status</button>
+  <button class="tab" id="skillsTab" onclick="showTab('skills')">Skills</button>
+  <button class="tab" id="moreTab" onclick="showTab('more')">More</button>
 </div>
 <script>
 var tg = window.Telegram.WebApp;
@@ -170,9 +169,8 @@ function sendCommand(text) {
   xhr.onload = function() {
     try {
       var data = JSON.parse(xhr.responseText);
-      var reply = data.result || data.response || 'No response';
-      addMsg(reply, false);
-    } catch(e) { addMsg('Error parsing response', false); }
+      addMsg(data.result || data.response || 'No response', false);
+    } catch(e) { addMsg('Error', false); }
   };
   xhr.onerror = function() { addMsg('Network error', false); };
   xhr.send(JSON.stringify({method:'command', params:{text: text}}));
@@ -187,91 +185,75 @@ function doSend() {
   sendCommand(text);
 }
 
-$('chatSend').onclick = doSend;
-$('chatInput').onkeydown = function(e) { if (e.key === 'Enter') doSend(); };
-
-function switchTab(name) {
-  var active = document.querySelectorAll('.tab');
-  for (var j = 0; j < active.length; j++) active[j].classList.remove('active');
-  var contents = document.querySelectorAll('.tab-content');
-  for (var j = 0; j < contents.length; j++) contents[j].style.display = 'none';
-  var tb = document.querySelector('[data-tab="' + name + '"]');
-  if (tb) tb.classList.add('active');
-  var tc = document.getElementById('tab-' + name);
-  if (tc) tc.style.display = 'block';
-  if (name === 'status') loadStatus();
-  if (name === 'skills') loadActions();
-  if (name === 'more') loadAbout();
+function showTab(name) {
+  var all = ['chat','status','skills','more'];
+  for (var i = 0; i < all.length; i++) {
+    var el = $(all[i] + 'Tab');
+    if (el) el.className = 'tab';
+    var content = $('tab-' + all[i]);
+    if (content) content.style.display = 'none';
+  }
+  $(name + 'Tab').className = 'tab active';
+  $('tab-' + name).style.display = 'block';
+  if (name == 'status') loadStatus();
+  if (name == 'skills') loadActions();
+  if (name == 'more') loadAbout();
 }
 
 function loadStatus() {
   $('systemStats').innerHTML = 'Loading...';
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/argos/api', true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.onload = function() {
-    try {
-      var data = JSON.parse(xhr.responseText);
-      $('systemStats').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
-    } catch(e) { $('systemStats').innerHTML = 'Error'; }
+  var x = new XMLHttpRequest();
+  x.open('POST', '/argos/api', true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function() {
+    try { $('systemStats').innerHTML = '<pre>' + JSON.parse(x.responseText).result + '</pre>'; }
+    catch(e) { $('systemStats').innerHTML = 'Error'; }
   };
-  xhr.send(JSON.stringify({method:'command', params:{text:'status'}}));
-  
+  x.send(JSON.stringify({method:'command', params:{text:'status'}}));
   $('vpnStats').innerHTML = 'Loading...';
-  var xhr2 = new XMLHttpRequest();
-  xhr2.open('POST', '/argos/api', true);
-  xhr2.setRequestHeader('Content-Type', 'application/json');
-  xhr2.onload = function() {
-    try {
-      var data = JSON.parse(xhr2.responseText);
-      $('vpnStats').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
-    } catch(e) { $('vpnStats').innerHTML = 'Error'; }
+  var y = new XMLHttpRequest();
+  y.open('POST', '/argos/api', true);
+  y.setRequestHeader('Content-Type', 'application/json');
+  y.onload = function() {
+    try { $('vpnStats').innerHTML = '<pre>' + JSON.parse(y.responseText).result + '</pre>'; }
+    catch(e) { $('vpnStats').innerHTML = 'Error'; }
   };
-  xhr2.send(JSON.stringify({method:'command', params:{text:'vpn'}}));
+  y.send(JSON.stringify({method:'command', params:{text:'vpn'}}));
 }
 
 function loadActions() {
-  var actions = [
-    {name:'System', icon:'S', cmd:'status'},
-    {name:'GPU', icon:'G', cmd:'gpu'},
-    {name:'VPN', icon:'V', cmd:'vpn'},
-    {name:'Skills', icon:'K', cmd:'skills'},
-    {name:'AI', icon:'A', cmd:'providers'},
-    {name:'Help', icon:'?', cmd:'help'},
+  var a = [
+    ['System','S','status'],['GPU','G','gpu'],['VPN','V','vpn'],
+    ['Skills','K','skills'],['AI','A','providers'],['Help','?','help']
   ];
-  var html = '';
-  for (var i = 0; i < actions.length; i++) {
-    html += '<div class="grid-tile" onclick="quickCmd(\'' + actions[i].cmd + '\')"><div class="icon">' + actions[i].icon + '</div><div class="name">' + actions[i].name + '</div></div>';
+  var h = '';
+  for (var i = 0; i < a.length; i++) {
+    h += '<div class="grid-tile" onclick="quickCmd(\'' + a[i][2] + '\')"><div class="icon">' + a[i][1] + '</div><div class="name">' + a[i][0] + '</div></div>';
   }
-  $('actionsGrid').innerHTML = html;
+  $('actionsGrid').innerHTML = h;
 }
 
 function loadAbout() {
   $('aboutSection').innerHTML = 'Loading...';
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/argos/api', true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.onload = function() {
-    try {
-      var data = JSON.parse(xhr.responseText);
-      $('aboutSection').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
-    } catch(e) { $('aboutSection').innerHTML = 'Error'; }
+  var x = new XMLHttpRequest();
+  x.open('POST', '/argos/api', true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function() {
+    try { $('aboutSection').innerHTML = '<pre>' + JSON.parse(x.responseText).result + '</pre>'; }
+    catch(e) { $('aboutSection').innerHTML = 'Error'; }
   };
-  xhr.send(JSON.stringify({method:'command', params:{text:'version'}}));
+  x.send(JSON.stringify({method:'command', params:{text:'version'}}));
 }
 
 function quickCmd(cmd) {
-  var tabs = document.querySelectorAll('.tab');
-  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
-  var contents = document.querySelectorAll('.tab-content');
-  for (var i = 0; i < contents.length; i++) contents[i].style.display = 'none';
-  document.querySelector('[data-tab="chat"]').classList.add('active');
-  $('tab-chat').style.display = 'block';
+  showTab('chat');
   $('chatInput').value = cmd;
   doSend();
 }
 
-addMsg('Type help for commands or just ask anything.', false);
+addMsg('Ask anything or type help', false);
+$('chatSend').onclick = doSend;
+$('chatInput').onkeydown = function(e) { if (e.key == 'Enter') doSend(); };
 </script>
 </body>
 </html>"""
