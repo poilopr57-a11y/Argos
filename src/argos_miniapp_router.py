@@ -36,79 +36,18 @@ def _psutil_info() -> dict[str, Any]:
 async def _handle_command(text: str) -> str:
     t = text.strip().lower()
 
+    # Only keep essential local commands
     if t in ("+", "++", "+ ping", "ping", "пинг", "test", "тест", "эй", "э", "на связи"):
-        return "Argos Mini-App работает"
+        return "Argos работает"
 
     if t in ("help", "помощь", "команды", "?"):
-        return (
-            "Доступные команды:\n"
-            "+ ping — проверка\n"
-            "статус — система\n"
-            "gpu — GPU инфо\n"
-            "vpn — VPN статус\n"
-            "навыки / skills\n"
-            "провайдеры / providers\n"
-            "версия / version\n"
-            "Остальное: @Argosssbot"
-        )
-
-    if t in ("status", "статус", "статус системы", "system"):
-        info = _psutil_info()
-        if info:
-            uptime_m = info["uptime_seconds"] // 60
-            return (
-                f"CPU: {info['cpu_pct']}%\n"
-                f"RAM: {info['ram_pct']}% ({info['ram_free_gb']}/{info['ram_total_gb']} GB)\n"
-                f"Disk: {info['disk_pct']}%\n"
-                f"Uptime: {uptime_m} min\n"
-                f"GCP: europe-west4-a"
-            )
-        return "Status unavailable"
+        return "Напиши любой вопрос — ARGOS ответит через ИИ. /help для списка команд."
 
     if t in ("version", "версия"):
-        return (
-            f"ARGOS Mini-App v{MINIAPP_VERSION}\n"
-            f"GCP: argos-vpn-eu\n"
-            f"IP: {_SERVER_IP}\n"
-            f"Python: {platform.python_version()}"
-        )
+        import platform as _plt
+        return f"ARGOS Mini-App v{MINIAPP_VERSION}\nGCP: argos-vpn-eu\nIP: {_SERVER_IP}\nPython: {_plt.python_version()}"
 
-    if t in ("gpu", "gpu status", "gpu статус"):
-        wg = ""
-        try:
-            r = subprocess.run(["wg", "show"], capture_output=True, text=True, timeout=5)
-            wg = r.stdout or r.stderr or ""
-        except Exception:
-            pass
-        return (
-            f"WireGuard: {'active' if wg else 'inactive'}\n"
-            f"Server key: KJPpkpgajLD/...\n"
-            f"Port: 51820/UDP"
-        )
-
-    if t in ("vpn", "vpn status", "vpn статус"):
-        return (
-            f"VPN Server: {_SERVER_IP}:51820\n"
-            f"WebApp: vpn.argosssss.win\n"
-            f"Status: Active"
-        )
-
-    if t in ("skills", "навыки", "список навыков"):
-        return (
-            "Навыки ARGOS:\n"
-            "AI Chat, GPU, P2P, MemPalace,\n"
-            "Obsidian, IoT, VPN, Telegram\n"
-            "Полный: @Argosssbot /skills"
-        )
-
-    if t in ("providers", "провайдеры", "ai"):
-        return (
-            "AI: Claude, DeepSeek, Kimi,\n"
-            "OpenAI, Gemini, Ollama\n"
-            "Для AI: @Argosssbot"
-        )
-
-    # Try MCP proxy fallback to real ARGOS
+    # Everything else goes to real MCP via Cloudflare tunnel
     try:
         import aiohttp
         body = {
@@ -118,20 +57,16 @@ async def _handle_command(text: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 _MCP_TARGET, json=body,
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 data = await resp.json()
                 reply = data.get("result", {}).get("content", [{}])[0].get("text", "")
                 if reply:
                     return reply
-    except Exception:
-        pass
+    except Exception as exc:
+        return f"MCP недоступен: {exc}"
 
-    return (
-        f"Неизвестно: {text[:50]}\n"
-        "Используй @Argosssbot для AI\n"
-        "'помощь' для команд"
-    )
+    return "MCP не ответил. Попробуй ещё раз или напиши @Argosssbot"
 
 
 def _webapp_html() -> str:
