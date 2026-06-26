@@ -151,83 +151,91 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 </div>
 <div class="loader" id="loader">Loading...</div>
 <script>
-const tg = window.Telegram.WebApp;
-tg.expand();
+var tg = window.Telegram.WebApp;
+if (tg) tg.expand();
 
-const $ = function(id) { return document.getElementById(id); };
-const chatBox = $('chatBox'), chatInput = $('chatInput'), chatSend = $('chatSend');
+function $(id) { return document.getElementById(id); }
 
-async function apiFetch(path, opts) {
-  try {
-    const r = await fetch(path, opts || {});
-    return await r.json();
-  } catch(e) {
-    return {error: e.message};
-  }
-}
-
-async function sendCommand(text) {
-  const r = await fetch('/argos/api', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({method:'command', params:{text: text}})
-  });
-  return await r.json();
-}
+// Show app immediately
+$('loader').style.display = 'none';
+$('app').style.display = 'block';
 
 function addMsg(text, isUser) {
-  const d = document.createElement('div');
+  var d = document.createElement('div');
   d.className = 'chat-msg ' + (isUser ? 'chat-user' : 'chat-bot');
   d.textContent = text;
-  chatBox.appendChild(d);
-  chatBox.scrollTop = chatBox.scrollHeight;
+  $('chatBox').appendChild(d);
+  $('chatBox').scrollTop = $('chatBox').scrollHeight;
 }
 
-chatSend.onclick = async function() {
-  const text = chatInput.value.trim();
+function sendCommand(text) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/argos/api', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onload = function() {
+    try {
+      var data = JSON.parse(xhr.responseText);
+      var reply = data.result || data.response || 'No response';
+      addMsg(reply, false);
+    } catch(e) { addMsg('Error parsing response', false); }
+  };
+  xhr.onerror = function() { addMsg('Network error', false); };
+  xhr.send(JSON.stringify({method:'command', params:{text: text}}));
+}
+
+function doSend() {
+  var input = $('chatInput');
+  var text = input.value.trim();
   if (!text) return;
   addMsg(text, true);
-  chatInput.value = '';
-  chatSend.disabled = true;
-  chatSend.textContent = '...';
-  try {
-    const data = await sendCommand(text);
-    const reply = data.result || data.response || 'No response';
-    addMsg(reply, false);
-  } catch(e) {
-    addMsg('Error: ' + e.message, false);
-  }
-  chatSend.disabled = false;
-  chatSend.textContent = 'Go';
-};
+  input.value = '';
+  sendCommand(text);
+}
 
-chatInput.onkeydown = function(e) {
-  if (e.key === 'Enter') chatSend.click();
-};
+$('chatSend').onclick = doSend;
+$('chatInput').onkeydown = function(e) { if (e.key === 'Enter') doSend(); };
 
 // Tabs
-document.querySelectorAll('.tab').forEach(function(tab) {
-  tab.onclick = function() {
-    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.tab-content').forEach(function(t) { t.style.display = 'none'; });
-    tab.classList.add('active');
-    var content = $('tab-' + tab.dataset.tab);
-    if (content) content.style.display = 'block';
-    if (tab.dataset.tab === 'status') loadStatus();
-    if (tab.dataset.tab === 'skills') loadActions();
-    if (tab.dataset.tab === 'more') loadAbout();
+var tabs = document.querySelectorAll('.tab');
+for (var i = 0; i < tabs.length; i++) {
+  tabs[i].onclick = function() {
+    var active = document.querySelectorAll('.tab');
+    for (var j = 0; j < active.length; j++) active[j].classList.remove('active');
+    var contents = document.querySelectorAll('.tab-content');
+    for (var j = 0; j < contents.length; j++) contents[j].style.display = 'none';
+    this.classList.add('active');
+    var tab = $('tab-' + this.dataset.tab);
+    if (tab) tab.style.display = 'block';
+    if (this.dataset.tab === 'status') loadStatus();
+    if (this.dataset.tab === 'skills') loadActions();
+    if (this.dataset.tab === 'more') loadAbout();
   };
-});
+}
 
 function loadStatus() {
   $('systemStats').innerHTML = 'Loading...';
-  sendCommand('status').then(function(data) {
-    $('systemStats').innerHTML = '<pre style="font-size:12px;white-space:pre-wrap">' + (data.result || data.response || data.error || 'No data') + '</pre>';
-  });
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/argos/api', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onload = function() {
+    try {
+      var data = JSON.parse(xhr.responseText);
+      $('systemStats').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
+    } catch(e) { $('systemStats').innerHTML = 'Error'; }
+  };
+  xhr.send(JSON.stringify({method:'command', params:{text:'status'}}));
+  
   $('vpnStats').innerHTML = 'Loading...';
-  sendCommand('vpn').then(function(data) {
-    $('vpnStats').innerHTML = '<pre style="font-size:12px;white-space:pre-wrap">' + (data.result || data.response || data.error || 'No data') + '</pre>';
-  });
+  var xhr2 = new XMLHttpRequest();
+  xhr2.open('POST', '/argos/api', true);
+  xhr2.setRequestHeader('Content-Type', 'application/json');
+  xhr2.onload = function() {
+    try {
+      var data = JSON.parse(xhr2.responseText);
+      $('vpnStats').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
+    } catch(e) { $('vpnStats').innerHTML = 'Error'; }
+  };
+  xhr2.send(JSON.stringify({method:'command', params:{text:'vpn'}}));
 }
 
 function loadActions() {
@@ -240,43 +248,38 @@ function loadActions() {
     {name:'Help', icon:'?', cmd:'help'},
   ];
   var html = '';
-  actions.forEach(function(a) {
-    html += '<div class="grid-tile" onclick="quickCmd(\'' + a.cmd + '\')"><div class="icon">' + a.icon + '</div><div class="name">' + a.name + '</div></div>';
-  });
+  for (var i = 0; i < actions.length; i++) {
+    html += '<div class="grid-tile" onclick="quickCmd(\'' + actions[i].cmd + '\')"><div class="icon">' + actions[i].icon + '</div><div class="name">' + actions[i].name + '</div></div>';
+  }
   $('actionsGrid').innerHTML = html;
 }
 
 function loadAbout() {
-  sendCommand('version').then(function(data) {
-    $('aboutSection').innerHTML = '<pre style="font-size:12px;white-space:pre-wrap">' + (data.result || data.response || 'No data') + '</pre>';
-  });
+  $('aboutSection').innerHTML = 'Loading...';
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/argos/api', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onload = function() {
+    try {
+      var data = JSON.parse(xhr.responseText);
+      $('aboutSection').innerHTML = '<pre style="font-size:12px">' + (data.result || 'No data') + '</pre>';
+    } catch(e) { $('aboutSection').innerHTML = 'Error'; }
+  };
+  xhr.send(JSON.stringify({method:'command', params:{text:'version'}}));
 }
 
 function quickCmd(cmd) {
-  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-  document.querySelectorAll('.tab-content').forEach(function(t) { t.style.display = 'none'; });
+  var tabs = document.querySelectorAll('.tab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+  var contents = document.querySelectorAll('.tab-content');
+  for (var i = 0; i < contents.length; i++) contents[i].style.display = 'none';
   document.querySelector('[data-tab="chat"]').classList.add('active');
-  var chat = $('tab-chat');
-  if (chat) chat.style.display = 'block';
-  chatInput.value = cmd;
-  chatSend.click();
+  $('tab-chat').style.display = 'block';
+  $('chatInput').value = cmd;
+  doSend();
 }
 
-// Init
-(async function() {
-  try {
-    var data = await sendCommand('+ ping');
-    if (data.result || data.response) {
-      $('loader').style.display = 'none';
-      $('app').style.display = 'block';
-      addMsg('Argos ready. Type help for commands.', false);
-    } else {
-      $('loader').innerHTML = 'Connection error';
-    }
-  } catch(e) {
-    $('loader').innerHTML = 'Error: ' + e.message;
-  }
-})();
+addMsg('Type help for commands or just ask anything.', false);
 </script>
 </body>
 </html>"""
