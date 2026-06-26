@@ -1,5 +1,21 @@
 # Memory
 
+## Session — 2026-06-26
+- Action: Деплой полноценного Argos VPN WebApp на Railway с QR, графиком трафика, выбором серверов и управлением конфигом
+- Результат:
+  - Новая версия WebApp задеплоена на `https://vpn-api-production-c91b.up.railway.app/vpn/webapp`
+  - 4 вкладки (Status, Config, Servers, Profile), QR-код, canvas-график, копирование/скачивание/удаление, продление подписки
+  - API endpoints работают: `/vpn/servers`, `/vpn/client/{telegram_id}`, `/vpn/client/extend`, `/vpn/qr/{telegram_id}`, `/vpn/client/create`
+  - Telegram Menu Button настроен на WebApp для `@argoossso_vpn_bot`
+- Исправлено:
+  - `src/vpn_service/wg_manager.py`: dry-run режим генерирует корректные base64 ключи (не urlsafe), `_safe_key` regex заанкерен и проверяет длину
+- Проблемы и решения:
+  - Railway CLI не работал (токен `ed9f6767-...` истёк) — использовали GraphQL API напрямую с рабочим токеном
+  - `serviceInstanceRedeploy` и `serviceInstanceDeployV2` деплоили старый коммит — помог `serviceConnect` для обновления HEAD
+  - Авто-деплой GitHub нельзя настроить через API (нет доступа проекта к репо) — создан helper `scripts/deploy_vpn_railway.py`
+- Файлы: `src/vpn_service/api.py` (новый webapp), `src/vpn_service/wg_manager.py` (fix), `scripts/deploy_vpn_railway.py`
+- Статус: WebApp работает; для обновлений используй `python scripts/deploy_vpn_railway.py` с `RAILWAY_API_TOKEN`
+
 ## Telegram Fix — 2026-05-24 09:00
 - **Root cause**: Telegram молчал из-за split-brain: Task Scheduler (Start Argos on Logon, ARGOS_BOT_STARTUP, ARGOS_BOT_PERM, ARGOS_BOT_NOW, ARGOS_TelegramBot, ArgosRestart) запускал лаунчер, который стартовал `run_telegram_bot.py` (создаёт отдельный ArgosCore+MCP) И `main.py` одновременно. Два экземпляра дрались за порты 8000/8090/47291, Telegram polling thread не мог установить long-poll.
 - **Fix**: Отключены ВСЕ конкурирующие Task Scheduler задачи (6 шт.). `start-argoss.ps1` исправлен — больше не запускает `run_telegram_bot.py`, только `main.py`. Запуск через `Start-Process main.py -WindowStyle Hidden` без лаунчера.
