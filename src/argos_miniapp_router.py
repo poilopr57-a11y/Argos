@@ -104,7 +104,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 .grid-tile .icon{font-size:24px;margin-bottom:4px}
 .grid-tile .name{font-size:12px;color:var(--tg-theme-hint-color,#8e94a2)}
 .tabs{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--tg-theme-bg-color,#0b0f19);border-top:1px solid rgba(255,255,255,.06);z-index:100;max-width:480px;margin:0 auto}
-.tab{flex:1;padding:12px 4px;text-align:center;font-size:11px;color:var(--tg-theme-hint-color,#8e94a2);cursor:pointer;transition:.15s;border:none;background:none}
+.tab{flex:1;padding:12px 4px;text-align:center;font-size:11px;color:var(--tg-theme-hint-color,#8e94a2);cursor:pointer;transition:.15s;border:none;background:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .tab.active{color:var(--tg-theme-button-color,#2563eb);font-weight:600}
 .tab .tab-icon{font-size:20px;display:block;margin-bottom:2px}
 .chat-box{height:50vh;overflow-y:auto;padding:12px;border-radius:10px;background:var(--tg-theme-secondary-bg-color,#1a1f2e);margin:12px 0;display:flex;flex-direction:column;gap:8px}
@@ -144,10 +144,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
   </div>
 </div>
 <div class="tabs" id="tabs">
-  <button class="tab active" data-tab="chat"><span class="tab-icon">Chat</span>Chat</button>
-  <button class="tab" data-tab="status"><span class="tab-icon">Status</span>Status</button>
-  <button class="tab" data-tab="skills"><span class="tab-icon">Skills</span>Skills</button>
-  <button class="tab" data-tab="more"><span class="tab-icon">More</span>More</button>
+  <button class="tab active" data-tab="chat" onclick="switchTab('chat')"><span class="tab-icon">Chat</span>Chat</button>
+  <button class="tab" data-tab="status" onclick="switchTab('status')"><span class="tab-icon">Status</span>Status</button>
+  <button class="tab" data-tab="skills" onclick="switchTab('skills')"><span class="tab-icon">Skills</span>Skills</button>
+  <button class="tab" data-tab="more" onclick="switchTab('more')"><span class="tab-icon">More</span>More</button>
 </div>
 <script>
 var tg = window.Telegram.WebApp;
@@ -190,21 +190,18 @@ function doSend() {
 $('chatSend').onclick = doSend;
 $('chatInput').onkeydown = function(e) { if (e.key === 'Enter') doSend(); };
 
-// Tabs
-var tabs = document.querySelectorAll('.tab');
-for (var i = 0; i < tabs.length; i++) {
-  tabs[i].onclick = function() {
-    var active = document.querySelectorAll('.tab');
-    for (var j = 0; j < active.length; j++) active[j].classList.remove('active');
-    var contents = document.querySelectorAll('.tab-content');
-    for (var j = 0; j < contents.length; j++) contents[j].style.display = 'none';
-    this.classList.add('active');
-    var tab = $('tab-' + this.dataset.tab);
-    if (tab) tab.style.display = 'block';
-    if (this.dataset.tab === 'status') loadStatus();
-    if (this.dataset.tab === 'skills') loadActions();
-    if (this.dataset.tab === 'more') loadAbout();
-  };
+function switchTab(name) {
+  var active = document.querySelectorAll('.tab');
+  for (var j = 0; j < active.length; j++) active[j].classList.remove('active');
+  var contents = document.querySelectorAll('.tab-content');
+  for (var j = 0; j < contents.length; j++) contents[j].style.display = 'none';
+  var tb = document.querySelector('[data-tab="' + name + '"]');
+  if (tb) tb.classList.add('active');
+  var tc = document.getElementById('tab-' + name);
+  if (tc) tc.style.display = 'block';
+  if (name === 'status') loadStatus();
+  if (name === 'skills') loadActions();
+  if (name === 'more') loadAbout();
 }
 
 function loadStatus() {
