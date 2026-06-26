@@ -119,7 +119,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 </style>
 </head>
 <body>
-<div class="wrap" id="app" style="display:none">
+<div class="wrap" id="app">
   <div id="tab-chat" class="tab-content">
     <div class="card-title"><span>Chat</span></div>
     <div class="chat-box" id="chatBox"></div>
@@ -149,16 +149,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
   <button class="tab" data-tab="skills"><span class="tab-icon">Skills</span>Skills</button>
   <button class="tab" data-tab="more"><span class="tab-icon">More</span>More</button>
 </div>
-<div class="loader" id="loader">Loading...</div>
 <script>
 var tg = window.Telegram.WebApp;
 if (tg) tg.expand();
 
 function $(id) { return document.getElementById(id); }
-
-// Show app immediately
-$('loader').style.display = 'none';
-$('app').style.display = 'block';
 
 function addMsg(text, isUser) {
   var d = document.createElement('div');
