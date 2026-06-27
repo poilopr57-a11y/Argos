@@ -664,6 +664,33 @@ async def list_servers() -> list[dict[str, Any]]:
     return SERVERS
 
 
+@router.get("/vless/config")
+async def vless_config() -> dict[str, Any]:
+    return {
+        "protocol": "VLESS+WebSocket+TLS",
+        "address": "vpn.argosssss.win",
+        "port": 443,
+        "uuid": "bcdae1c0-93ab-49b1-b3a8-8465b982f888",
+        "path": "/ray",
+        "security": "tls",
+        "sni": "vpn.argosssss.win",
+        "transport": "ws",
+        "link": "vless://bcdae1c0-93ab-49b1-b3a8-8465b982f888@vpn.argosssss.win:443?encryption=none&security=tls&sni=vpn.argosssss.win&type=ws&path=%2Fray&host=vpn.argosssss.win#Argos-CF-WS",
+    }
+
+
+@router.get("/qr_vless")
+async def vless_qr() -> Response:
+    import qrcode  # type: ignore
+    import io as _io
+    link = "vless://bcdae1c0-93ab-49b1-b3a8-8465b982f888@vpn.argosssss.win:443?encryption=none&security=tls&sni=vpn.argosssss.win&type=ws&path=%2Fray&host=vpn.argosssss.win#Argos-CF-WS"
+    img = qrcode.make(link)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
 @router.get("/webapp", response_class=HTMLResponse)
 async def vpn_webapp() -> str:
     return _webapp_html()
