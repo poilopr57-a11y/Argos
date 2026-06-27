@@ -74,82 +74,81 @@ def _webapp_html() -> str:
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Argos</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color,#e8ecf4);font-family:sans-serif;font-size:15px;height:100dvh;display:flex;flex-direction:column}
-.header{padding:12px 16px;font-weight:600;font-size:15px;border-bottom:1px solid rgba(255,255,255,.06)}
-.chat{flex:1;overflow-y:auto;padding:12px}
-.input-row{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(255,255,255,.06)}
-.input{flex:1;padding:12px 16px;border-radius:24px;border:1px solid rgba(255,255,255,.1);background:var(--tg-theme-secondary-bg-color,#1a1f2e);color:var(--tg-theme-text-color,#e8ecf4);font-size:14px;outline:none}
-.input:focus{border-color:var(--tg-theme-button-color,#2563eb)}
-.btn{min-width:44px;height:44px;border-radius:50%;border:none;background:var(--tg-theme-button-color,#2563eb);color:#fff;font-size:18px;cursor:pointer}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;
+  background:var(--tg-theme-bg-color,#0b0f19);color:var(--tg-theme-text-color,#e8ecf4);padding:0;min-height:100vh}
+.wrap{max-width:480px;margin:0 auto;padding:16px 16px 80px}
+.card{background:var(--tg-theme-secondary-bg-color,#1a1f2e);border-radius:12px;padding:16px;margin:12px 0}
+.btn{display:block;width:100%;padding:14px;margin:8px 0;border:none;border-radius:10px;
+  background:var(--tg-theme-button-color,#2563eb);color:var(--tg-theme-button-text-color,#fff);font-size:15px;cursor:pointer}
 .btn:active{opacity:.7}
-.msg{padding:10px 14px;border-radius:12px;max-width:85%;font-size:14px;line-height:1.5;margin:6px 0;word-break:break-word;white-space:pre-wrap}
-.msg-u{background:var(--tg-theme-button-color,#2563eb);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
-.msg-b{background:#2a3040;color:var(--tg-theme-text-color,#e8ecf4);align-self:flex-start;border-bottom-left-radius:4px}
-.menu{display:flex;gap:4px;padding:8px 12px 0;overflow-x:auto}
-.menu-btn{flex-shrink:0;padding:8px 14px;border-radius:20px;border:1px solid rgba(255,255,255,.1);background:var(--tg-theme-secondary-bg-color,#1a1f2e);color:var(--tg-theme-hint-color,#8e94a2);font-size:12px;cursor:pointer}
-.menu-btn:active{opacity:.6}
+.pre{font-size:12px;white-space:pre-wrap;line-height:1.4;color:var(--tg-theme-hint-color,#8e94a2)}
+.chat-box{max-height:50vh;overflow-y:auto;padding:8px;margin:12px 0;border-radius:10px;background:var(--tg-theme-secondary-bg-color,#1a1f2e)}
+.msg{padding:8px 12px;border-radius:10px;margin:6px 0;font-size:14px;line-height:1.4;word-break:break-word;white-space:pre-wrap}
+.msg-u{background:var(--tg-theme-button-color,#2563eb);color:#fff;border-bottom-right-radius:3px}
+.msg-b{background:#252a3a;color:var(--tg-theme-text-color,#e8ecf4);border-bottom-left-radius:3px}
+.chat-input{display:flex;gap:8px}
+.chat-input input{flex:1;padding:12px 16px;border-radius:24px;border:1px solid rgba(255,255,255,.1);
+  background:var(--tg-theme-secondary-bg-color,#1a1f2e);color:var(--tg-theme-text-color,#e8ecf4);font-size:14px;outline:none}
+.chat-input button{width:44px;height:44px;border-radius:50%;border:none;background:var(--tg-theme-button-color,#2563eb);color:#fff;font-size:18px;cursor:pointer}
+.quick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.quick-btn{background:var(--tg-theme-secondary-bg-color,#1a1f2e);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:12px;text-align:center;cursor:pointer;font-size:13px;color:var(--tg-theme-hint-color,#8e94a2)}
+.quick-btn:active{opacity:.6}
 </style>
 </head>
 <body>
-<div class="header">ARGOS v2.1.3</div>
-<div class="menu">
-<button class="menu-btn" onclick="sendCmd('статус')">Статус</button>
-<button class="menu-btn" onclick="sendCmd('список навыков')">Навыки</button>
-<button class="menu-btn" onclick="sendCmd('провайдеры')">ИИ</button>
-<button class="menu-btn" onclick="sendCmd('gpu status')">GPU</button>
-<button class="menu-btn" onclick="sendCmd('помощь')">Помощь</button>
+<div class="wrap">
+<div style="display:flex;gap:4px;margin-bottom:12px">
+<button class="tab" data-tab="chat" style="border:none;background:none;color:var(--tg-theme-hint-color);padding:10px 14px;font-size:14px;border-bottom:2px solid transparent">Чат</button>
+<button class="tab" data-tab="status" style="border:none;background:none;color:var(--tg-theme-hint-color);padding:10px 14px;font-size:14px;border-bottom:2px solid transparent">Статус</button>
+<button class="tab" data-tab="skills" style="border:none;background:none;color:var(--tg-theme-hint-color);padding:10px 14px;font-size:14px;border-bottom:2px solid transparent">Навыки</button>
+<button class="tab" data-tab="actions" style="border:none;background:none;color:var(--tg-theme-hint-color);padding:10px 14px;font-size:14px;border-bottom:2px solid transparent">Ещё</button>
 </div>
-<div class="chat" id="chat"></div>
-<div class="input-row">
-<input class="input" id="inp" placeholder="Спроси ARGOS...">
-<button class="btn" id="send">↑</button>
+
+<div class="tab-content" id="tab-chat" style="display:block">
+<div class="chat-box" id="chat" style="min-height:120px"><div class="msg msg-b">ARGOS v2.1.3. Спроси что угодно.</div></div>
+<div class="chat-input"><input id="inp" placeholder="Вопрос или команда..."><button id="send">↑</button></div>
 </div>
+
+<div class="tab-content" id="tab-status" style="display:none">
+<div class="card"><div class="pre" id="statusOut">Загрузка...</div></div>
+<div class="card"><div class="pre" id="providersOut">Загрузка...</div></div>
+<div class="card"><div class="pre" id="gpuOut">Загрузка...</div></div>
+</div>
+
+<div class="tab-content" id="tab-skills" style="display:none">
+<div class="pre" id="skillsOut">Загрузка...</div>
+</div>
+
+<div class="tab-content" id="tab-actions" style="display:none">
+<div class="quick" id="actionsOut"></div>
+</div>
+</div>
+
 <script>
-var w = window.Telegram.WebApp;
-if (w) { w.ready(); w.expand(); }
-var chat = document.getElementById('chat');
-var inp = document.getElementById('inp');
-var send = document.getElementById('send');
+var W=window.Telegram.WebApp;W.ready();W.expand();
+function $(id){return document.getElementById(id)}
+var ch=$('chat'),inp=$('inp'),btn=$('send');
 
-function addMsg(t, u) {
-  var d = document.createElement('div');
-  d.className = 'msg ' + (u ? 'msg-u' : 'msg-b');
-  d.textContent = t;
-  chat.appendChild(d);
-  chat.scrollTop = chat.scrollHeight;
-}
+function addMsg(t,u){var d=document.createElement('div');d.className='msg '+(u?'msg-u':'msg-b');d.textContent=t;ch.appendChild(d);ch.scrollTop=ch.scrollHeight}
+function api(text,cb){var x=new XMLHttpRequest();x.open('POST','/argos/api',true);x.setRequestHeader('Content-Type','application/json');x.timeout=25000;x.onload=function(){try{cb(JSON.parse(x.responseText).result||'Ok')}catch(e){cb('Error')}};x.onerror=function(){cb('Network error')};x.ontimeout=function(){cb('Timeout');x.abort()};x.send(JSON.stringify({method:'command',params:{text:text}}))}
+function doSend(){var t=inp.value.trim();if(!t)return;addMsg(t,true);inp.value='';btn.disabled=true;api(t,function(r){addMsg(r,false);btn.disabled=false})}
+btn.onclick=doSend;inp.onkeydown=function(e){if(e.key=='Enter')doSend()}
 
-function api(text, cb) {
-  var x = new XMLHttpRequest();
-  x.open('POST', '/argos/api', true);
-  x.setRequestHeader('Content-Type','application/json');
-  x.timeout = 15000;
-  x.onload = function() {
-    try { cb(JSON.parse(x.responseText).result || 'OK'); }
-    catch(e) { cb('Error'); }
-  };
-  x.onerror = function() { cb('Network error'); };
-  x.ontimeout = function() { cb('Timeout'); x.abort(); };
-  x.send(JSON.stringify({method:'command', params:{text:text}}));
-}
-
-function sendCmd(t) {
-  addMsg(t, true);
-  api(t, function(r) { addMsg(r, false); });
-}
-
-function doSend() {
-  var t = inp.value.trim(); if (!t) return;
-  sendCmd(t); inp.value = '';
-}
-send.onclick = doSend;
-inp.onkeydown = function(e) { if (e.key == 'Enter') doSend(); };
-addMsg('ARGOS готов. Пиши или жми кнопки меню.', false);
+document.querySelectorAll('.tab').forEach(function(tab){tab.onclick=function(){
+  document.querySelectorAll('.tab').forEach(function(t){t.style.borderBottomColor='transparent';t.style.color='var(--tg-theme-hint-color)'});
+  document.querySelectorAll('.tab-content').forEach(function(t){t.style.display='none'});
+  tab.style.borderBottomColor='var(--tg-theme-button-color,#2563eb)';tab.style.color='var(--tg-theme-text-color)';
+  $('tab-'+tab.dataset.tab).style.display='block';
+  if(tab.dataset.tab=='status'){api('mcp debug',function(r){$('statusOut').textContent=r});api('providers',function(r){$('providersOut').textContent=r});api('gpu status',function(r){$('gpuOut').textContent=r})}
+  if(tab.dataset.tab=='skills'){api('список навыков',function(r){$('skillsOut').textContent=r})}
+  if(tab.dataset.tab=='actions'){var c=[['Система','статус системы'],['GPU','gpu status'],['P2P','p2p status'],['Память','mempalace status'],['Obsidian','obsidian status'],['Telegram','telegram status'],['ИИ','providers'],['VPN','vpn status']];var h='';for(var i=0;i<c.length;i++){h+='<div class=\"quick-btn\" onclick=\"var t=document.querySelectorAll(\\'.tab\\');t[0].click();inp.value=\\''+c[i][1]+'\\';doSend()\">'+c[i][0]+'</div>'};$('actionsOut').innerHTML=h}
+  W.expand()}})
+var ft=document.querySelector('.tab');if(ft){ft.style.borderBottomColor='var(--tg-theme-button-color,#2563eb)';ft.style.color='var(--tg-theme-text-color)'}
 </script>
 </body>
 </html>"""
