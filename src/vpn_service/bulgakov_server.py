@@ -40,6 +40,27 @@ async def health():
     return {"tunnel": "bulgakov", "words": codec.word_count(), "status": "active"}
 
 
+@app.post("/bulk")
+async def bulk_read(request: Request):
+    """Bulk-декодирование с LZ4: принимает [[p,l,w],...], возвращает base64."""
+    import base64
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "invalid json"}, status_code=400)
+
+    coords = payload.get("coords", [])
+    if not coords or not isinstance(coords, list):
+        return JSONResponse(content={"error": "empty coords"}, status_code=400)
+
+    tunnel = _get_tunnel()
+    try:
+        data = tunnel.codec.decode_bulk(coords, decompress=True)
+        return {"status": 200, "size": len(data), "data": base64.b64encode(data).decode()}
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.get("/read")
 async def read_page(
     page: int = Query(...),
