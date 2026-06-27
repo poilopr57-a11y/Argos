@@ -47,6 +47,12 @@ async def _handle_command(text: str) -> str:
         import platform as _plt
         return f"ARGOS Mini-App v{MINIAPP_VERSION}\nGCP: argos-vpn-eu\nIP: {_SERVER_IP}\nPython: {_plt.python_version()}"
 
+    # Short messages get local response
+    if len(t) <= 20 and any(c.isdigit() for c in t):
+        return f"Код получен. Для AI-ответа напиши развёрнутый вопрос."
+    if t in ("привет", "hi", "hello", "ку"):
+        return "Привет! Спрашивай что угодно — ARGOS ответит."
+
     # Everything else goes to real MCP via Cloudflare tunnel
     try:
         import aiohttp
@@ -57,16 +63,17 @@ async def _handle_command(text: str) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 _MCP_TARGET, json=body,
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 data = await resp.json()
                 reply = data.get("result", {}).get("content", [{}])[0].get("text", "")
                 if reply:
                     return reply
+                return "MCP вернул пустой ответ"
     except Exception as exc:
-        return f"MCP недоступен: {exc}"
+        return f"Жди... MCP отвечает ({str(exc)[:50]})"
 
-    return "MCP не ответил. Попробуй ещё раз или напиши @Argosssbot"
+    return "Готов"
 
 
 def _webapp_html() -> str:
