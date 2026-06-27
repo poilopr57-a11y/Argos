@@ -14,13 +14,15 @@ RUN apk add --no-cache \
     uvicorn \
     aiohttp \
     psutil \
-    python-telegram-bot==20.7
+    python-telegram-bot==20.7 \
+    PyMuPDF
 
 # Copy the application code
 COPY ./src/vpn_api.py /app/vpn_api.py
 COPY ./src/vpn_service /app/src/vpn_service
 COPY ./src/argos_miniapp_router.py /app/src/argos_miniapp_router.py
 COPY ./railway.json /app/railway.json
+COPY ./master.pdf /opt/bulgakov/master.pdf
 
 ENV PYTHONPATH=/app
 ENV ARGOS_VPN_DRY_RUN=true
