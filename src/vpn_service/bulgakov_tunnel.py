@@ -15,8 +15,6 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
-import requests
-
 
 class BulgakovCodec:
     """Парсит PDF 'Мастер и Маргарита' в координатную сетку."""
