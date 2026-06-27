@@ -200,6 +200,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
         </div>
       </div>
 
+      <div class="card" style="margin-top:16px">
+        <div class="card-title"><span>⚡ VLESS+WS (рекомендуется)</span></div>
+        <p style="font-size:12px;color:#16a34a;margin-bottom:8px">Работает в России • через Cloudflare</p>
+        <pre class="config-box" style="font-size:11px;max-height:60px;overflow:hidden" id="vlessText">vless://bcdae1c0-93ab-49b1-b3a8-8465b982f888@vpn.argosssss.win:443?encryption=none&security=tls&sni=vpn.argosssss.win&type=ws&path=%2Fray&host=vpn.argosssss.win#Argos-CF-WS</pre>
+        <div class="action-row">
+          <button class="btn btn-sm" id="vlessCopyBtn">📋 Копировать</button>
+          <button class="btn btn-sm" onclick="window.open('/vpn/qr_vless')">📱 QR</button>
+        </div>
+      </div>
+
       <div id="configExists" style="display:none">
         <div class="card">
           <div class="card-title">
@@ -482,6 +492,15 @@ $('configCopyBtn').onclick=function(){
   else{const ta=document.createElement('textarea');ta.value=text;
     document.body.appendChild(ta);ta.select();document.execCommand('copy');
     document.body.removeChild(ta);showToast('Конфиг скопирован')}
+};
+
+$('vlessCopyBtn').onclick=function(){
+  const text=$('vlessText').textContent;
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(text).then(()=>showToast('VLESS скопирован'));
+  else{const ta=document.createElement('textarea');ta.value=text;
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');
+    document.body.removeChild(ta);showToast('VLESS скопирован')}
 };
 
 $('configDownloadBtn').onclick=function(){
