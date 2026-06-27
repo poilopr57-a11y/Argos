@@ -45,7 +45,7 @@ class BulgakovCodec:
                         if len(clean) >= 2:
                             self.words.append((page_num + 1, line_num + 1, word_idx + 1, clean.lower()))
             doc.close()
-        except ImportError:
+        except Exception:
             self._fallback_text()
         if len(self.words) < 256:
             self._fallback_text()
@@ -189,6 +189,7 @@ class BulgakovTunnelClient:
 
     def send_data(self, data: bytes, packet_size: int = 16) -> bytes:
         """Отправляет данные через стеганографический туннель."""
+        import requests
         encoded = self.codec.encode_data(data)
         total = len(encoded)
         response_coords = []
