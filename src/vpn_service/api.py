@@ -157,7 +157,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 
   <div class="tabs" id="tabs">
     <div class="tab active" data-tab="dashboard"><span class="tab-icon">📊</span>Статус</div>
-    <div class="tab" data-tab="config"><span class="tab-icon">🔐</span>Конфиг</div>
+    <div class="tab" data-tab="config"><span class="tab-icon">⚡</span>Подключение</div>
     <div class="tab" data-tab="servers"><span class="tab-icon">🌍</span>Серверы</div>
     <div class="tab" data-tab="profile"><span class="tab-icon">👤</span>Профиль</div>
   </div>
@@ -189,7 +189,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
 
     <!-- ===== CONFIG ===== -->
     <div class="tab-content" id="tab-config">
-      <div class="card" id="configNoConfig">
+      <div class="card" style="border:1px solid #16a34a">
+        <div class="card-title">
+          <span>⚡ VLESS+WS</span>
+          <span class="badge badge-ok" style="margin-left:auto">Основной</span>
+        </div>
+        <p style="font-size:11px;color:#16a34a;margin-bottom:8px">Работает в РФ • Cloudflare • маскировка под HTTPS</p>
+        <pre class="config-box" style="font-size:11px;max-height:48px;overflow:hidden" id="vlessText">vless://bcdae1c0-93ab-49b1-b3a8-8465b982f888@vpn.argosssss.win:443?encryption=none&security=tls&sni=vpn.argosssss.win&type=ws&path=%2Fray&host=vpn.argosssss.win#Argos-CF-WS</pre>
+        <div class="action-row">
+          <button class="btn btn-sm" id="vlessCopyBtn">📋 Копировать</button>
+          <button class="btn btn-sm btn-outline" onclick="window.open('/vpn/qr_vless')">📱 QR-код</button>
+        </div>
+        <p style="font-size:9px;color:var(--tg-theme-hint-color);margin-top:4px">Импорт: v2rayNG / Nekobox / FoxRay</p>
+      </div>
+
+      <div class="card" style="margin-top:8px;opacity:0.65">
+        <div class="card-title"><span>🔐 WireGuard</span></div>
+        <p style="font-size:10px;color:#d97706;margin-bottom:4px">⚠️ Заблокирован в РФ. Только как резерв.</p>
+        <div id="configNoConfig">
         <div class="empty-state">
           <div class="empty-icon">🔐</div>
           <p style="font-size:15px;font-weight:500;margin-bottom:8px">Нет активного конфига</p>
@@ -199,15 +216,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;f
           <button class="btn" id="configCreateBtn">Создать конфиг</button>
         </div>
       </div>
-
-      <div class="card" style="margin-top:16px">
-        <div class="card-title"><span>⚡ VLESS+WS (рекомендуется)</span></div>
-        <p style="font-size:12px;color:#16a34a;margin-bottom:8px">Работает в России • через Cloudflare</p>
-        <pre class="config-box" style="font-size:11px;max-height:60px;overflow:hidden" id="vlessText">vless://bcdae1c0-93ab-49b1-b3a8-8465b982f888@vpn.argosssss.win:443?encryption=none&security=tls&sni=vpn.argosssss.win&type=ws&path=%2Fray&host=vpn.argosssss.win#Argos-CF-WS</pre>
-        <div class="action-row">
-          <button class="btn btn-sm" id="vlessCopyBtn">📋 Копировать</button>
-          <button class="btn btn-sm" onclick="window.open('/vpn/qr_vless')">📱 QR</button>
-        </div>
       </div>
 
       <div id="configExists" style="display:none">
