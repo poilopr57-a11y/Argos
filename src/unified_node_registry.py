@@ -336,15 +336,6 @@ NODES: Dict[str, Dict[str, Any]] = {
     },
 
     # ── Compute / GPU / Inference ────────────────────────────────────────────
-    "ollama-pc": {
-        "role": NODE_ROLE_COMPUTE,
-        "address": "192.168.1.72:11434",
-        "capabilities": ["ollama", "gpu", "inference"],
-        "service": None,
-        "health_endpoint": "http://192.168.1.72:11434/api/tags",
-        "expected": False,
-        "meta": {"name": "Ollama PC (disabled)", "group": "compute"},
-    },
     "rx580-consciousness": {
         "role": NODE_ROLE_COMPUTE,
         "address": "192.168.1.53:8090",
@@ -374,15 +365,7 @@ NODES: Dict[str, Dict[str, Any]] = {
         "expected": True,
         "meta": {"name": "3x-UI VPN", "group": "cloud"},
     },
-    "argos-android": {
-        "role": NODE_ROLE_EDGE,
-        "address": "192.168.1.0/24",
-        "capabilities": ["mobile", "android"],
-        "service": None,
-        "health_endpoint": None,
-        "expected": False,
-        "meta": {"name": "Android generic", "group": "edge"},
-    },
+
     "cf-brain": {
         "role": NODE_ROLE_CLOUD,
         "address": "api-laptop.argosssss.win",
@@ -392,42 +375,7 @@ NODES: Dict[str, Dict[str, Any]] = {
         "expected": True,
         "meta": {"name": "Cloudflare Brain Tunnel", "group": "cloud"},
     },
-    "ngrok-brain": {
-        "role": NODE_ROLE_CLOUD,
-        "address": "ngrok",
-        "capabilities": ["tunnel", "proxy"],
-        "service": None,
-        "health_endpoint": None,
-        "expected": False,
-        "meta": {"name": "ngrok tunnel", "group": "cloud"},
-    },
-    "orion-pc": {
-        "role": NODE_ROLE_COMPUTE,
-        "address": "192.168.1.72",
-        "capabilities": ["windows", "gpu", "v100", "hardware"],
-        "service": None,
-        "health_endpoint": None,
-        "expected": False,
-        "meta": {"name": "Orion PC (alias)", "group": "core"},
-    },
-    "entity-bio-brain-test-v1": {
-        "role": NODE_ROLE_ENTITY,
-        "address": "192.168.1.53",
-        "capabilities": ["ai", "bio-brain", "experimental"],
-        "service": None,
-        "health_endpoint": None,
-        "expected": False,
-        "meta": {"name": "Bio Brain (experimental)", "group": "entity"},
-    },
-    "entity-cubbit-storage": {
-        "role": NODE_ROLE_ENTITY,
-        "address": "192.168.1.53",
-        "capabilities": ["ai", "storage", "distributed"],
-        "service": None,
-        "health_endpoint": None,
-        "expected": False,
-        "meta": {"name": "Cubbit Storage", "group": "entity"},
-    },
+
 }
 
 
