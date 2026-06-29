@@ -37,6 +37,8 @@ android.minapi = 24
 android.ndk = 27b
 android.archs = arm64-v8a
 
+p4a.branch = develop
+
 # [FIX-SAI-FILEPROVIDER]
 # FileProvider is injected into AndroidManifest.xml by the p4a_hook.py
 # after_apk_build hook, which places <provider> correctly inside <application>.
