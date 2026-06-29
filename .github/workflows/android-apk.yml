@@ -2,9 +2,9 @@ name: 🤖 Android APK — build (debug)
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, master]
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 env:
