@@ -13,7 +13,7 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,md,xml
 source.include_patterns = assets/*,config/*,res/*
 
 # Requirements
-requirements = python3==3.10.0,kivy==2.3.0,requests,pyjnius==1.6.1,android,paho-mqtt,python-dotenv
+requirements = hostpython3==3.10.0,python3==3.10.0,kivy==2.3.0,requests,pyjnius==1.6.1,android,paho-mqtt,python-dotenv
 
 # Hook script – patches pyjnius for Python 3 and disables Android-incompatible
 # Python stdlib C extensions (grp, _uuid, _lzma) before the build starts.
