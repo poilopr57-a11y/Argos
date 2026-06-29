@@ -165,9 +165,23 @@ def _ensure_language_level(toolchain):
         print(f"[p4a_hook] Added language_level=3 to {patched_count} .pyx/.pxd file(s)")
 
 
+def _ensure_gui_arg_defaults(toolchain):
+    """service_only bootstrap не регистрирует GUI-аргументы (orientation и пр.),
+    но общий p4a make_package() читает args.orientation → AttributeError.
+    toolchain.args — тот же Namespace, что уйдёт в make_package."""
+    args = getattr(toolchain, "args", None)
+    if args is None:
+        return
+    for name, value in {"orientation": "portrait", "window": False}.items():
+        if not hasattr(args, name):
+            setattr(args, name, value)
+            print(f"[p4a_hook] set default args.{name}={value!r} (service_only)")
+
+
 def before_apk_build(toolchain):
     """Called by p4a before APK assembly – extra safety-net to patch pyjnius."""
     try:
+        _ensure_gui_arg_defaults(toolchain)
         _ensure_language_level(toolchain)
         arch_obj = getattr(toolchain, 'archs', [None])[0]
         if arch_obj:
