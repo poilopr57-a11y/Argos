@@ -28,9 +28,10 @@ android.minapi = 24
 android.ndk = 27b
 android.archs = arm64-v8a
 
-# Build settings
+# Build settings — service_only bootstrap avoids SDL2/Kivy native compilation
 android.accept_sdk_license = True
 p4a.branch = develop
+p4a.bootstrap = service_only
 
 # Icons
 icon.filename = %(source.dir)s/assets/argos_icon_512.png
